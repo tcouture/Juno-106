@@ -4,6 +4,8 @@
 #include "MidiHandler.h"
 #include "UI.h"
 #include "PatchManager.h"
+#include "Arpeggiator.h"
+#include "FactoryPatches.h"
 
 void setup() {
     Serial.begin(115200);
@@ -11,10 +13,14 @@ void setup() {
 
     synth.begin();
     midiHandler.begin();
+    arp.begin();
 
     if (!patchManager.begin()) {
         Serial.println("Patch storage unavailable; running without SD.");
     } else {
+#if INSTALL_FACTORY_ON_BOOT
+        installFactoryPatches();
+#endif
         PatchData p;
         if (patchManager.loadPatch(0, p)) synth.applyPatch(p);
     }
@@ -25,6 +31,7 @@ void setup() {
 
 void loop() {
     midiHandler.update();
-    synth.update();      // <-- NEW: applies any pending LFO/env modulation
+    synth.update();
+    arp.tick(millis());
     ui.update();
 }

@@ -29,19 +29,31 @@ void AudioEffectJunoChorus::setMode(uint8_t mode) {
     }
 }
 
+void AudioEffectJunoChorus::setRate(float hz) {
+    if (hz < 0.05f) hz = 0.05f;
+    if (hz > 8.0f)  hz = 8.0f;
+    lfoRate = hz;
+}
+
+void AudioEffectJunoChorus::setDepth(float smp) {
+    if (smp < 0.0f)  smp = 0.0f;
+    if (smp > 80.0f) smp = 80.0f;
+    depthSmp = smp;
+}
+
 void AudioEffectJunoChorus::update(void) {
-    audio_block_t* in = receiveReadOnly(0);
+    audio_block_t* in   = receiveReadOnly(0);
     audio_block_t* outL = allocate();
     audio_block_t* outR = allocate();
 
     if (!outL || !outR) {
-        if (in) release(in);
+        if (in)   release(in);
         if (outL) release(outL);
         if (outR) release(outR);
         return;
     }
 
-    // If disabled, emit silence (dry is mixed externally)
+    // Bypass path: emit silence so the dry signal (mixed externally) is all you hear.
     if (!active || !in) {
         memset(outL->data, 0, sizeof(outL->data));
         memset(outR->data, 0, sizeof(outR->data));
@@ -53,55 +65,84 @@ void AudioEffectJunoChorus::update(void) {
         return;
     }
 
-    const float sr = AUDIO_SAMPLE_RATE_EXACT;
+    const float sr       = AUDIO_SAMPLE_RATE_EXACT;
     const float phaseInc = lfoRate / sr;
+    const float twoPi    = 2.0f * (float)M_PI;
 
     for (int i = 0; i < AUDIO_BLOCK_SAMPLES; i++) {
-        // Write input to both delay lines
-        int16_t x = in->data[i];
-        bufL[widx] = x;
-        bufR[widx] = x;
+        // ------------------------------------------------------------
+        // 1) Pre-chorus high-cut (one-pole LPF on the INPUT, per side)
+        //    Emulates the limited top-end of a BBD input stage.
+        // ------------------------------------------------------------
+        float xf = (float)in->data[i];
+        preLpL += (xf - preLpL) * PRE_HICUT_COEFF;
+        preLpR += (xf - preLpR) * PRE_HICUT_COEFF;
 
-        // Two LFO phases 180° apart
+        // ------------------------------------------------------------
+        // 2) Write to delay lines WITH a small feedback of the prior
+        //    wet-out sample. This adds the gentle BBD coloration.
+        // ------------------------------------------------------------
+        float inL = preLpL + fbL * FEEDBACK_AMOUNT;
+        float inR = preLpR + fbR * FEEDBACK_AMOUNT;
+        bufL[widx] = satI16((int32_t)inL);
+        bufR[widx] = satI16((int32_t)inR);
+
+        // ------------------------------------------------------------
+        // 3) LFO: sine, opposite phase on the two taps.
+        //    Smoothed with a one-pole filter for extra silk.
+        // ------------------------------------------------------------
         float pL = lfoPhase;
         float pR = lfoPhase + 0.5f;
         if (pR >= 1.0f) pR -= 1.0f;
 
-        // Triangle LFO in [-1, 1]
-        auto tri = [](float p) {
-            float x = p * 4.0f;
-            if      (x < 1.0f) return x;
-            else if (x < 3.0f) return 2.0f - x;
-            else               return x - 4.0f;
-        };
-        float lfoL = tri(pL);
-        float lfoR = tri(pR);
+        float rawL = sinf(pL * twoPi);
+        float rawR = sinf(pR * twoPi);
 
-        float dL = baseSmp + depthSmp * lfoL;
-        float dR = baseSmp + depthSmp * lfoR;
+        lfoSmoothL += (rawL - lfoSmoothL) * LFO_SMOOTH_COEFF;
+        lfoSmoothR += (rawR - lfoSmoothR) * LFO_SMOOTH_COEFF;
 
-        // Read pointers with fractional delay
+        float dL = baseSmp + depthSmp * lfoSmoothL;
+        float dR = baseSmp + depthSmp * lfoSmoothR;
+
+        // ------------------------------------------------------------
+        // 4) Read fractional-delayed samples from the lines.
+        // ------------------------------------------------------------
         float rL = (float)widx - dL;
         float rR = (float)widx - dR;
         while (rL < 0) rL += BUFSIZE;
         while (rR < 0) rR += BUFSIZE;
 
-        int   iL = (int)rL;
-        float fL = rL - iL;
+        int   iL  = (int)rL;
+        float fL  = rL - iL;
         int   iL2 = (iL + 1) % BUFSIZE;
-        int   iR = (int)rR;
-        float fR = rR - iR;
+
+        int   iR  = (int)rR;
+        float fR  = rR - iR;
         int   iR2 = (iR + 1) % BUFSIZE;
 
-        int16_t sL = (int16_t)((1.0f - fL) * bufL[iL] + fL * bufL[iL2]);
-        int16_t sR = (int16_t)((1.0f - fR) * bufR[iR] + fR * bufR[iR2]);
+        float wetL = (1.0f - fL) * bufL[iL] + fL * bufL[iL2];
+        float wetR = (1.0f - fR) * bufR[iR] + fR * bufR[iR2];
 
-        outL->data[i] = sL;
-        outR->data[i] = sR;
+        // ------------------------------------------------------------
+        // 5) Output high-cut (one-pole LPF on the WET path, per side).
+        //    Emulates the BBD output's reconstruction filtering.
+        // ------------------------------------------------------------
+        outLpL += (wetL - outLpL) * OUT_HICUT_COEFF;
+        outLpR += (wetR - outLpR) * OUT_HICUT_COEFF;
 
-        // Advance
+        // Stash for next sample's feedback
+        fbL = outLpL;
+        fbR = outLpR;
+
+        outL->data[i] = satI16((int32_t)outLpL);
+        outR->data[i] = satI16((int32_t)outLpR);
+
+        // ------------------------------------------------------------
+        // 6) Advance pointers
+        // ------------------------------------------------------------
         widx++;
         if (widx >= BUFSIZE) widx = 0;
+
         lfoPhase += phaseInc;
         if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
     }
@@ -112,17 +153,3 @@ void AudioEffectJunoChorus::update(void) {
     release(outR);
     release(in);
 }
-
-void AudioEffectJunoChorus::setRate(float hz) {
-    if (hz < 0.05f) hz = 0.05f;
-    if (hz > 8.0f)  hz = 8.0f;
-    lfoRate = hz;
-}
-
-void AudioEffectJunoChorus::setDepth(float smp) {
-    if (smp < 0.0f)  smp = 0.0f;
-    if (smp > 80.0f) smp = 80.0f;  // stay well within BUFSIZE margin
-    depthSmp = smp;
-}
-
-

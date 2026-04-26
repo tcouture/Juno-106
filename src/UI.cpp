@@ -3,101 +3,119 @@
 #include "SynthEngine.h"
 #include "PatchManager.h"
 #include "TouchCalibration.h"
+#include "Arpeggiator.h"
+#include "OnScreenKeyboard.h"
 #include <ILI9341_t3.h>
 #include <XPT2046_Touchscreen.h>
-#include "OnScreenKeyboard.h"
 
 static ILI9341_t3 tft(TFT_CS, TFT_DC, TFT_RST);
 static XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
 UI ui;
 
-// ------------------- Slider description -------------------
+// ---- Slider description ----
 struct Slider {
     const char* label;
     int x, y, w, h;
     float* value;
     float  min, max;
-    bool   logarithmic = false;
+    bool   logarithmic;
+    ParamId paramId;
 };
 
-// Per-page slider arrays, rebuilt whenever page changes or patch changes.
-static Slider pageSliders[10];
+static Slider pageSliders[12];
 static int    pageSliderCount = 0;
 
-// Layout constants
 static constexpr int HEADER_H  = 30;
 static constexpr int TABS_Y    = HEADER_H;
 static constexpr int TABS_H    = 24;
 static constexpr int BODY_Y    = HEADER_H + TABS_H;
 static constexpr int BODY_H    = SCREEN_H - BODY_Y;
-static constexpr int SLIDER_W  = 34;
-static constexpr int SLIDER_H  = 130;
+static constexpr int SLIDER_W  = 30;
+static constexpr int SLIDER_H  = 120;
 static constexpr int SLIDER_Y  = BODY_Y + 10;
 
-static const char* pageNames[PAGE_COUNT] = { "OSC", "VCF", "ENV", "CHO", "PAT" };
+static const char* pageNames[PAGE_COUNT] = { "OSC", "VCF", "ENV", "CHO", "PRF", "PAT" };
 
-// ------------------- Page slider builders -------------------
+// ---- Page builders ----
 static void buildOscSliders() {
     PatchData& p = synth.patch();
-    int x = 10;
-    pageSliders[0] = { "SAW",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.sawLevel,   0.0f, 1.0f }; x += SLIDER_W + 8;
-    pageSliders[1] = { "PUL",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseLevel, 0.0f, 1.0f }; x += SLIDER_W + 8;
-    pageSliders[2] = { "SUB",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.subLevel,   0.0f, 1.0f }; x += SLIDER_W + 8;
-    pageSliders[3] = { "PW",    x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseWidth, 0.05f, 0.95f }; x += SLIDER_W + 8;
-    // LFO controls
-    pageSliders[4] = { "LFO-R", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoRate,    0.05f, 20.0f, true }; x += SLIDER_W + 8;
-    pageSliders[5] = { "LFO-D", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoDepth,   0.0f, 1.0f };
-    pageSliderCount = 6;
+    int x = 8;
+    pageSliders[0] = { "SAW",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.sawLevel,   0.0f, 1.0f, false, ParamId::SawLevel };   x += SLIDER_W + 6;
+    pageSliders[1] = { "PUL",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseLevel, 0.0f, 1.0f, false, ParamId::PulseLevel }; x += SLIDER_W + 6;
+    pageSliders[2] = { "SUB",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.subLevel,   0.0f, 1.0f, false, ParamId::SubLevel };   x += SLIDER_W + 6;
+    pageSliders[3] = { "PW",    x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseWidth, 0.05f, 0.95f, false, ParamId::PulseWidth }; x += SLIDER_W + 6;
+    pageSliders[4] = { "LFO-R", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoRate,    0.05f, 20.0f, true, ParamId::LfoRate };   x += SLIDER_W + 6;
+    pageSliders[5] = { "LFO-D", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoDepth,   0.0f, 1.0f, false, ParamId::LfoDepth };   x += SLIDER_W + 6;
+    pageSliders[6] = { "GLIDE", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.glideMs,    0.0f, 1000.0f, false, ParamId::GlideMs };
+    pageSliderCount = 7;
 }
-
 static void buildVcfSliders() {
     PatchData& p = synth.patch();
     int x = 10;
-    pageSliders[0] = { "HPF",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.hpfCutoff, 20.0f, 1000.0f, true }; x += SLIDER_W + 8;
-    pageSliders[1] = { "CUT",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.cutoff,    40.0f, 8000.0f, true }; x += SLIDER_W + 8;
-    pageSliders[2] = { "RES",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.resonance, 0.7f,  5.0f };        x += SLIDER_W + 8;
-    pageSliders[3] = { "ENV",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f };
+    pageSliders[0] = { "HPF", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.hpfCutoff, 20.0f, 1000.0f, true, ParamId::HpfCutoff }; x += SLIDER_W + 8;
+    pageSliders[1] = { "CUT", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.cutoff,    40.0f, 8000.0f, true, ParamId::Cutoff };    x += SLIDER_W + 8;
+    pageSliders[2] = { "RES", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.resonance, 0.7f,  5.0f,    false, ParamId::Resonance }; x += SLIDER_W + 8;
+    pageSliders[3] = { "ENV", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f,    false, ParamId::EnvAmount };
     pageSliderCount = 4;
 }
-
 static void buildEnvSliders() {
     PatchData& p = synth.patch();
     int x = 10;
-    pageSliders[0] = { "A-A",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampA, 0.0f, 3000.0f, true }; x += SLIDER_W + 4;
-    pageSliders[1] = { "A-D",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampD, 0.0f, 3000.0f, true }; x += SLIDER_W + 4;
-    pageSliders[2] = { "A-S",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampS, 0.0f, 1.0f };          x += SLIDER_W + 4;
-    pageSliders[3] = { "A-R",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampR, 0.0f, 5000.0f, true }; x += SLIDER_W + 16;
-    pageSliders[4] = { "F-A",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltA, 0.0f, 3000.0f, true }; x += SLIDER_W + 4;
-    pageSliders[5] = { "F-D",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltD, 0.0f, 3000.0f, true }; x += SLIDER_W + 4;
-    pageSliders[6] = { "F-S",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltS, 0.0f, 1.0f };          x += SLIDER_W + 4;
-    pageSliders[7] = { "F-R",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltR, 0.0f, 5000.0f, true };
-    pageSliderCount = 8;
+    pageSliders[0] = { "A-A",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampA, 0.0f, 3000.0f, true, ParamId::AmpA }; x += SLIDER_W + 4;
+    pageSliders[1] = { "A-D",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampD, 0.0f, 3000.0f, true, ParamId::AmpD }; x += SLIDER_W + 4;
+    pageSliders[2] = { "A-S",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampS, 0.0f, 1.0f,    false, ParamId::AmpS }; x += SLIDER_W + 4;
+    pageSliders[3] = { "A-R",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.ampR, 0.0f, 5000.0f, true, ParamId::AmpR }; x += SLIDER_W + 12;
+    pageSliders[4] = { "F-A",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltA, 0.0f, 3000.0f, true, ParamId::FltA }; x += SLIDER_W + 4;
+    pageSliders[5] = { "F-D",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltD, 0.0f, 3000.0f, true, ParamId::FltD }; x += SLIDER_W + 4;
+    pageSliders[6] = { "F-S",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltS, 0.0f, 1.0f,    false, ParamId::FltS }; x += SLIDER_W + 4;
+    pageSliders[7] = { "F-R",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltR, 0.0f, 5000.0f, true, ParamId::FltR }; x += SLIDER_W + 12;
+    pageSliders[8] = { "V-AMT",x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.velAmount, 0.0f, 1.0f, false, ParamId::VelAmount };
+    pageSliderCount = 9;
 }
-
 static void buildChorusSliders() {
     PatchData& p = synth.patch();
-    // Only meaningful when chorus is on, but we show them always for easy tweaking
     int x = 20;
-    int y = BODY_Y + 100;  // below the mode buttons
-    pageSliders[0] = { "RATE", x, y, SLIDER_W, SLIDER_H - 30, &p.chorusRate,  0.05f, 8.0f,  true };
-    x += SLIDER_W + 12;
-    pageSliders[1] = { "DEPTH", x, y, SLIDER_W, SLIDER_H - 30, &p.chorusDepth, 0.0f, 80.0f };
+    int y = BODY_Y + 60;
+    pageSliders[0] = { "RATE",  x, y, SLIDER_W, SLIDER_H - 20, &p.chorusRate,  0.05f, 8.0f, true, ParamId::ChorusRate };  x += SLIDER_W + 12;
+    pageSliders[1] = { "DEPTH", x, y, SLIDER_W, SLIDER_H - 20, &p.chorusDepth, 0.0f, 80.0f, false, ParamId::ChorusDepth };
     pageSliderCount = 2;
 }
-
+static void buildPerfSliders() {
+    pageSliderCount = 0;
+}
 static void buildPageSliders(UIPage page) {
     switch (page) {
         case PAGE_OSC:    buildOscSliders(); break;
         case PAGE_VCF:    buildVcfSliders(); break;
         case PAGE_ENV:    buildEnvSliders(); break;
         case PAGE_CHORUS: buildChorusSliders(); break;
+        case PAGE_PERF:   buildPerfSliders(); break;
         default:          pageSliderCount = 0; break;
     }
 }
 
-// ------------------- UI: header / tabs / cal button -------------------
+static void drawSliderAt(const Slider& s) {
+    tft.drawRect(s.x, s.y, s.w, s.h, ILI9341_DARKGREY);
+    tft.fillRect(s.x+1, s.y+1, s.w-2, s.h-2, ILI9341_BLACK);
+    float v = *s.value;
+    float norm;
+    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
+        norm = logf(v / s.min) / logf(s.max / s.min);
+    } else {
+        norm = (v - s.min) / (s.max - s.min);
+    }
+    if (norm < 0) norm = 0;
+    if (norm > 1) norm = 1;
+    int fillH = (int)((s.h - 2) * norm);
+    tft.fillRect(s.x+1, s.y + s.h - 1 - fillH, s.w-2, fillH, ILI9341_ORANGE);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setTextSize(1);
+    tft.setCursor(s.x + 1, s.y + s.h + 3);
+    tft.print(s.label);
+}
 
+// ---- UI init ----
 void UI::begin() {
     tft.begin();
     tft.setRotation(DISPLAY_ROTATION);
@@ -107,7 +125,6 @@ void UI::begin() {
     ts.setRotation(0);
 
     touchCal.begin(&tft, &ts);
-
     bool needCal = FORCE_TOUCH_RECAL;
     if (!needCal && !touchCal.loadFromSD()) needCal = true;
     if (!needCal && RECAL_ON_BOOT_TOUCH && ts.touched()) needCal = true;
@@ -138,7 +155,7 @@ void UI::drawHeader() {
     tft.setTextColor(ILI9341_WHITE);
     tft.setTextSize(2);
     tft.setCursor(6, 7);
-    tft.print("JUNO-106  ");
+    tft.print("JUNO-106 ");
     tft.print(synth.patch().name);
     drawCalButton(false);
 }
@@ -168,36 +185,14 @@ int UI::tabHitTest(int x, int y) const {
     return -1;
 }
 
-// ------------------- Body / pages -------------------
-
-static void drawSliderAt(const Slider& s) {
-    tft.drawRect(s.x, s.y, s.w, s.h, ILI9341_DARKGREY);
-    tft.fillRect(s.x+1, s.y+1, s.w-2, s.h-2, ILI9341_BLACK);
-    float v = *s.value;
-    float norm;
-    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
-        norm = (logf(v / s.min) / logf(s.max / s.min));
-    } else {
-        norm = (v - s.min) / (s.max - s.min);
-    }
-    if (norm < 0) norm = 0; 
-    if (norm > 1) norm = 1;
-    int fillH = (int)((s.h - 2) * norm);
-    tft.fillRect(s.x+1, s.y + s.h - 1 - fillH, s.w-2, fillH, ILI9341_ORANGE);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setTextSize(1);
-    tft.setCursor(s.x + 2, s.y + s.h + 4);
-    tft.print(s.label);
-}
-
+// ---- Page drawers ----
 void UI::drawOscPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
     for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
 
-    // LFO destination selector (right side)
     PatchData& p = synth.patch();
     const char* dests[] = {"OFF","PITCH","PW","FILT"};
-    int bx = SCREEN_W - 90, by = SLIDER_Y, bw = 80, bh = 26;
+    int bx = SCREEN_W - 80, by = SLIDER_Y, bw = 72, bh = 24;
     tft.setTextSize(1);
     tft.setTextColor(ILI9341_WHITE);
     tft.setCursor(bx, by - 10); tft.print("LFO DEST");
@@ -208,7 +203,7 @@ void UI::drawOscPage() {
         tft.drawRoundRect(bx, y, bw, bh, 4, ILI9341_WHITE);
         tft.setTextColor(ILI9341_WHITE);
         tft.setTextSize(2);
-        tft.setCursor(bx+8, y+6);
+        tft.setCursor(bx+6, y+5);
         tft.print(dests[i]);
     }
 }
@@ -220,12 +215,32 @@ void UI::drawVcfPage() {
 
 void UI::drawEnvPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
-    // Section labels
     tft.setTextColor(ILI9341_CYAN);
     tft.setTextSize(1);
-    tft.setCursor(14, BODY_Y + 2); tft.print("AMP ENV");
-    tft.setCursor(180, BODY_Y + 2); tft.print("FILTER ENV");
+    tft.setCursor(14, BODY_Y + 2);  tft.print("AMP ENV");
+    tft.setCursor(160, BODY_Y + 2); tft.print("FILTER ENV");
+    tft.setCursor(280, BODY_Y + 2); tft.print("VEL");
     for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
+
+    // Velocity destination buttons (compact, bottom row)
+    const char* labels[] = { "OFF", "VCA", "CUT", "LFO" };
+    int bw = 44, bh = 18;
+    int bx = SCREEN_W - 4*bw - 3*3 - 6;
+    int by = SCREEN_H - bh - 3;
+    uint8_t vd = synth.patch().velDest;
+    tft.setTextSize(1);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setCursor(bx, by - 10); tft.print("VEL DEST");
+    for (int i = 0; i < 4; i++) {
+        int xx = bx + i*(bw+3);
+        uint16_t bg = (vd == i) ? ILI9341_ORANGE : ILI9341_DARKGREY;
+        tft.fillRoundRect(xx, by, bw, bh, 3, bg);
+        tft.drawRoundRect(xx, by, bw, bh, 3, ILI9341_WHITE);
+        tft.setTextColor(ILI9341_WHITE);
+        int tw = strlen(labels[i]) * 6;
+        tft.setCursor(xx + (bw - tw)/2, by + (bh - 8)/2);
+        tft.print(labels[i]);
+    }
 }
 
 void UI::drawChorusPage() {
@@ -233,7 +248,6 @@ void UI::drawChorusPage() {
     const char* modes[] = { "OFF", "CHORUS I", "CHORUS II" };
     uint8_t cur = synth.patch().chorusMode;
 
-    // Three compact mode buttons in a single row at the top
     int bw = 96, bh = 32, gap = 8;
     int totalW = 3*bw + 2*gap;
     int bx = (SCREEN_W - totalW)/2;
@@ -250,12 +264,57 @@ void UI::drawChorusPage() {
         tft.print(modes[i]);
     }
 
-    // Sliders for RATE and DEPTH
     for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
 }
 
-// --- Patch page (save/load) ---
+void UI::drawPerfPage() {
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
+    tft.setTextColor(ILI9341_CYAN);
+    tft.setTextSize(1);
+    tft.setCursor(10, BODY_Y + 4);
+    tft.print("ARPEGGIATOR");
 
+    const char* modes[] = { "OFF", "UP", "DN", "UD", "RND" };
+    int bw = 50, bh = 26, gap = 6;
+    int bx = 10, by = BODY_Y + 22;
+    ArpMode cur = arp.getMode();
+    for (int i = 0; i < 5; i++) {
+        int xx = bx + i*(bw+gap);
+        uint16_t bg = (cur == i) ? ILI9341_ORANGE : ILI9341_DARKGREY;
+        tft.fillRoundRect(xx, by, bw, bh, 4, bg);
+        tft.drawRoundRect(xx, by, bw, bh, 4, ILI9341_WHITE);
+        tft.setTextSize(2); tft.setTextColor(ILI9341_WHITE);
+        int tw = strlen(modes[i]) * 12;
+        tft.setCursor(xx + (bw - tw)/2, by + (bh - 14)/2);
+        tft.print(modes[i]);
+    }
+
+    int row2y = by + bh + 12;
+    auto drawIncBtn = [&](int x, int y, int w, int h, const char* label) {
+        tft.fillRoundRect(x, y, w, h, 4, ILI9341_DARKGREY);
+        tft.drawRoundRect(x, y, w, h, 4, ILI9341_WHITE);
+        tft.setTextColor(ILI9341_WHITE); tft.setTextSize(2);
+        int tw = strlen(label) * 12;
+        tft.setCursor(x + (w - tw)/2, y + (h - 14)/2);
+        tft.print(label);
+    };
+
+    tft.setTextSize(2); tft.setTextColor(ILI9341_WHITE);
+    tft.setCursor(10, row2y + 5); tft.print("RATE");
+    drawIncBtn(80,  row2y, 30, 26, "-");
+    tft.setCursor(118, row2y + 5);
+    tft.printf("%.1fHz", arp.getRateHz());
+    drawIncBtn(200, row2y, 30, 26, "+");
+
+    int row3y = row2y + 36;
+    tft.setCursor(10, row3y + 5); tft.print("OCT");
+    drawIncBtn(80,  row3y, 30, 26, "-");
+    tft.setCursor(118, row3y + 5);
+    tft.printf("%d", arp.getOctaves());
+    drawIncBtn(200, row3y, 30, 26, "+");
+}
+
+// ---- Patch page ----
 static const int PATCH_COLS = 4;
 static const int PATCH_ROWS = NUM_PATCH_SLOTS / PATCH_COLS;
 
@@ -263,7 +322,7 @@ static void patchSlotRect(int idx, int& x, int& y, int& w, int& h) {
     int col = idx % PATCH_COLS;
     int row = idx / PATCH_COLS;
     int cellW = (SCREEN_W - 110) / PATCH_COLS;
-    int cellH = (BODY_H - 50) / PATCH_ROWS;
+    int cellH = (BODY_H - 10) / PATCH_ROWS;
     x = 4 + col * cellW;
     y = BODY_Y + 4 + row * cellH;
     w = cellW - 4;
@@ -272,11 +331,6 @@ static void patchSlotRect(int idx, int& x, int& y, int& w, int& h) {
 
 void UI::drawPatchPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
-    tft.setTextColor(ILI9341_CYAN);
-    tft.setTextSize(1);
-    tft.setCursor(4, BODY_Y + 2);
-    tft.print("PATCHES (tap to select)");
-
     char nm[17];
     for (int i = 0; i < NUM_PATCH_SLOTS; i++) {
         int x,y,w,h; patchSlotRect(i, x, y, w, h);
@@ -293,7 +347,6 @@ void UI::drawPatchPage() {
         tft.print(has ? nm : "(empty)");
     }
 
-    // Action buttons on right
     int bw = 96, bh = 30;
     int bx = SCREEN_W - bw - 6;
     int by1 = BODY_Y + 10;
@@ -310,7 +363,6 @@ void UI::drawPatchPage() {
         tft.setCursor(bx + (bw - tw)/2, y + (bh - 14)/2);
         tft.print(label);
     };
-
     drawBtn(by1, "LOAD",   ILI9341_DARKGREEN);
     drawBtn(by2, "SAVE",   ILI9341_MAROON);
     drawBtn(by3, "RENAME", ILI9341_NAVY);
@@ -335,7 +387,7 @@ void UI::showStatus(const char* msg, uint16_t color) {
     int tw = strlen(msg) * 12;
     tft.setCursor(x + (w - tw)/2, y + (h - 14)/2);
     tft.print(msg);
-    delay(800);
+    delay(700);
     drawBody();
 }
 
@@ -346,6 +398,7 @@ void UI::drawBody() {
         case PAGE_VCF:    drawVcfPage();    break;
         case PAGE_ENV:    drawEnvPage();    break;
         case PAGE_CHORUS: drawChorusPage(); break;
+        case PAGE_PERF:   drawPerfPage();   break;
         case PAGE_PATCH:  drawPatchPage();  break;
         default: break;
     }
@@ -357,8 +410,6 @@ void UI::drawAll() {
     drawTabs();
     drawBody();
 }
-
-// ------------------- Input handling -------------------
 
 bool UI::inCalButton(int x, int y) const {
     return (x >= calBtnX && x <= calBtnX + calBtnW &&
@@ -422,14 +473,12 @@ void UI::onPatchSlotTap(int slotIdx) {
 }
 
 void UI::handleTouch(int x, int y) {
-    // 1) CAL button
     if (inCalButton(x, y)) {
         drawCalButton(true);
         if (confirmRecalibrate()) recalibrateTouch();
         else drawAll();
         return;
     }
-    // 2) Tabs
     int t = tabHitTest(x, y);
     if (t >= 0) {
         if ((UIPage)t != currentPage) {
@@ -439,12 +488,11 @@ void UI::handleTouch(int x, int y) {
         }
         return;
     }
-    // 3) Sliders on current page
     int si = sliderHitTest(x, y);
     if (si >= 0) {
         Slider& s = pageSliders[si];
         float norm = 1.0f - (float)(y - s.y) / (float)s.h;
-        if (norm < 0) norm = 0; 
+        if (norm < 0) norm = 0;
         if (norm > 1) norm = 1;
         float v;
         if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
@@ -453,27 +501,38 @@ void UI::handleTouch(int x, int y) {
             v = s.min + norm * (s.max - s.min);
         }
         *s.value = v;
-        synth.applyPatch(synth.patch());
+        synth.setParam(s.paramId, v);
         drawSliderAt(s);
         return;
     }
-    // 4) Page-specific widgets
+
     if (currentPage == PAGE_OSC) {
-        // LFO dest buttons
-        int bx = SCREEN_W - 90, by = SLIDER_Y, bw = 80, bh = 26;
+        int bx = SCREEN_W - 80, by = SLIDER_Y, bw = 72, bh = 24;
         if (x >= bx && x <= bx + bw) {
             for (int i = 0; i < 4; i++) {
                 int yy = by + i*(bh+2);
                 if (y >= yy && y <= yy + bh) {
                     synth.patch().lfoDest = (uint8_t)i;
-                    synth.applyPatch(synth.patch());
                     drawOscPage();
                     return;
                 }
             }
         }
-        } else if (currentPage == PAGE_CHORUS) {
-        // Mode buttons (new compact row)
+    } else if (currentPage == PAGE_ENV) {
+        int bw = 44, bh = 18;
+        int bx = SCREEN_W - 4*bw - 3*3 - 6;
+        int by = SCREEN_H - bh - 3;
+        if (y >= by && y <= by + bh) {
+            for (int i = 0; i < 4; i++) {
+                int xx = bx + i*(bw+3);
+                if (x >= xx && x <= xx + bw) {
+                    synth.patch().velDest = (uint8_t)i;
+                    drawEnvPage();
+                    return;
+                }
+            }
+        }
+    } else if (currentPage == PAGE_CHORUS) {
         int bw = 96, bh = 32, gap = 8;
         int totalW = 3*bw + 2*gap;
         int bx = (SCREEN_W - totalW)/2;
@@ -483,21 +542,40 @@ void UI::handleTouch(int x, int y) {
             if (x >= xx && x <= xx + bw && y >= by && y <= by + bh) {
                 PatchData& p = synth.patch();
                 p.chorusMode = (uint8_t)i;
-                // Seed rate/depth with preset defaults when switching modes
-                if (i == 1)       { p.chorusRate = 0.513f; p.chorusDepth = 22.0f; }
-                else if (i == 2)  { p.chorusRate = 0.863f; p.chorusDepth = 36.0f; }
+                if (i == 1)      { p.chorusRate = 0.513f; p.chorusDepth = 22.0f; }
+                else if (i == 2) { p.chorusRate = 0.863f; p.chorusDepth = 36.0f; }
                 synth.applyPatch(p);
                 drawChorusPage();
                 return;
             }
         }
-        // Sliders (RATE, DEPTH) are handled by the generic sliderHitTest earlier.
-    }
+    } else if (currentPage == PAGE_PERF) {
+        int bw = 50, bh = 26, gap = 6;
+        int bx0 = 10, by = BODY_Y + 22;
+        if (y >= by && y <= by + bh) {
+            for (int i = 0; i < 5; i++) {
+                int xx = bx0 + i*(bw+gap);
+                if (x >= xx && x <= xx + bw) {
+                    arp.setMode((ArpMode)i);
+                    drawPerfPage();
+                    return;
+                }
+            }
+        }
+        int row2y = by + bh + 12;
+        if (y >= row2y && y <= row2y + 26) {
+            if (x >= 80 && x <= 110)  { arp.setRateHz(arp.getRateHz() - 0.5f); drawPerfPage(); return; }
+            if (x >= 200 && x <= 230) { arp.setRateHz(arp.getRateHz() + 0.5f); drawPerfPage(); return; }
+        }
+        int row3y = row2y + 36;
+        if (y >= row3y && y <= row3y + 26) {
+            if (x >= 80 && x <= 110)  { arp.setOctaves(arp.getOctaves() - 1); drawPerfPage(); return; }
+            if (x >= 200 && x <= 230) { arp.setOctaves(arp.getOctaves() + 1); drawPerfPage(); return; }
+        }
     } else if (currentPage == PAGE_PATCH) {
-        // Slot hit?
         int slot = patchSlotHitTest(x, y);
         if (slot >= 0) { onPatchSlotTap(slot); return; }
-        // Action buttons
+
         int bw = 96, bh = 30;
         int bx = SCREEN_W - bw - 6;
         int by1 = BODY_Y + 10;
@@ -506,7 +584,6 @@ void UI::handleTouch(int x, int y) {
         int by4 = by3 + bh + 6;
 
         if (x >= bx && x <= bx + bw) {
-            // LOAD
             if (y >= by1 && y <= by1 + bh) {
                 PatchData p;
                 if (patchManager.loadPatch(selectedSlot, p)) {
@@ -518,7 +595,6 @@ void UI::handleTouch(int x, int y) {
                 }
                 return;
             }
-            // SAVE (prompts for name via keyboard)
             if (y >= by2 && y <= by2 + bh) {
                 PatchData& p = synth.patch();
                 char seed[17];
@@ -539,10 +615,9 @@ void UI::handleTouch(int x, int y) {
                 bool saved = patchManager.savePatch(selectedSlot, p);
                 drawAll();
                 showStatus(saved ? "SAVED" : "SAVE FAIL",
-                        saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
+                           saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
                 return;
             }
-            // RENAME (loads slot, edits name, writes back)
             if (y >= by3 && y <= by3 + bh) {
                 PatchData p;
                 if (!patchManager.loadPatch(selectedSlot, p)) {
@@ -559,21 +634,13 @@ void UI::handleTouch(int x, int y) {
                 strncpy(p.name, newName, sizeof(p.name) - 1);
                 p.name[sizeof(p.name) - 1] = 0;
                 bool saved = patchManager.savePatch(selectedSlot, p);
-
-                // If the renamed slot is the currently-loaded patch, update live name too
-                if (strcmp(synth.patch().name, p.name) != 0 &&
-                    selectedSlot >= 0) {
-                    // Heuristic: if live patch matches on other fields, sync name
-                    // (Simple approach: always update live name when renaming the
-                    //  selected slot — the user probably wants that.)
-                    strncpy(synth.patch().name, p.name, sizeof(synth.patch().name)-1);
-                }
+                strncpy(synth.patch().name, p.name, sizeof(synth.patch().name) - 1);
+                synth.patch().name[sizeof(synth.patch().name) - 1] = 0;
                 drawAll();
                 showStatus(saved ? "RENAMED" : "RENAME FAIL",
-                        saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
+                           saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
                 return;
             }
-            // INIT
             if (y >= by4 && y <= by4 + bh) {
                 PatchData init;
                 synth.applyPatch(init);
@@ -587,17 +654,17 @@ void UI::handleTouch(int x, int y) {
 }
 
 void UI::update() {
-    if (ts.touched()) {
+    static uint32_t lastTouchMs = 0;
+    uint32_t now = millis();
+    if (ts.touched() && (now - lastTouchMs >= 16)) {
+        lastTouchMs = now;
         TS_Point p = ts.getPoint();
         int16_t sx, sy;
         touchCal.mapToScreen(p.x, p.y, sx, sy);
         handleTouch(sx, sy);
-        // Small debounce so slider doesn't jitter between reads
-        delay(15);
     }
-    // Periodic header refresh (patch name could change)
-    if (millis() - lastNames > 500) {
-        lastNames = millis();
+    if (now - lastNames > 500) {
+        lastNames = now;
         drawHeader();
     }
 }

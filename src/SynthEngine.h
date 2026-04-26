@@ -10,6 +10,23 @@ enum LfoDest : uint8_t {
     LFO_DEST_FILTER = 3
 };
 
+enum VelDest : uint8_t {
+    VEL_DEST_OFF    = 0,
+    VEL_DEST_VCA    = 1,
+    VEL_DEST_CUTOFF = 2,
+    VEL_DEST_LFO    = 3
+};
+
+enum class ParamId : uint8_t {
+    SawLevel, PulseLevel, SubLevel, PulseWidth,
+    Cutoff, Resonance, EnvAmount, HpfCutoff,
+    AmpA, AmpD, AmpS, AmpR,
+    FltA, FltD, FltS, FltR,
+    LfoRate, LfoDepth,
+    ChorusRate, ChorusDepth,
+    VelAmount, GlideMs
+};
+
 struct PatchData {
     char  name[17] = "INIT PATCH";
 
@@ -20,25 +37,33 @@ struct PatchData {
     float pulseWidth = 0.5f;
 
     // Filter
-    float cutoff     = 2000.0f;    // Hz, base
-    float resonance  = 0.7f;       // 0.7..5
-    float envAmount  = 0.5f;       // 0..1 (filter env -> cutoff)
-    float hpfCutoff  = 20.0f;      // Hz, simple HPF
+    float cutoff     = 2000.0f;
+    float resonance  = 0.7f;
+    float envAmount  = 0.5f;
+    float hpfCutoff  = 20.0f;
 
-    // Envelopes (ms, sustain 0..1)
+    // Envelopes
     float ampA = 5,  ampD = 50,  ampS = 0.8f, ampR = 250;
     float fltA = 5,  fltD = 120, fltS = 0.4f, fltR = 250;
 
     // LFO
-    float   lfoRate   = 4.0f;      // Hz
-    float   lfoDepth  = 0.0f;      // 0..1
+    float   lfoRate   = 4.0f;
+    float   lfoDepth  = 0.0f;
     uint8_t lfoDest   = LFO_DEST_OFF;
-    uint8_t lfoShape  = 0;         // 0=triangle,1=sine,2=square,3=saw
+    uint8_t lfoShape  = 0;
 
     // Chorus
-    uint8_t chorusMode  = 0;        // 0=off, 1=I, 2=II
-    float   chorusRate  = 0.513f;   // Hz  (override when mode != OFF)
-    float   chorusDepth = 22.0f;    // samples of peak modulation};
+    uint8_t chorusMode  = 0;
+    float   chorusRate  = 0.513f;
+    float   chorusDepth = 22.0f;
+
+    // Velocity
+    uint8_t velDest   = VEL_DEST_VCA;
+    float   velAmount = 0.8f;
+
+    // Glide / portamento (ms)
+    float   glideMs   = 0.0f;
+};
 
 class SynthEngine {
 public:
@@ -52,47 +77,51 @@ public:
     void applyPatch(const PatchData& p);
     PatchData& patch() { return currentPatch; }
 
-    // Control-rate tick (call at CONTROL_RATE_HZ from a timer)
+    // Fast-path single-parameter update (used by UI sliders)
+    void setParam(ParamId id, float value);
+
+    // Control-rate ISR entry (stashes mod values)
     void controlTick();
 
-    // LFO access (voices share one LFO)
+    // Main-loop consumer (applies pending mod to voices)
+    void update();
+
+    // Performance modulation
+    void setPitchBend(float semitones);
+    void setModWheel(float amount);
+    float getPitchBendSemi() const { return pitchBendSemi; }
+
+    // LFO access
     float currentLfo() const { return lfoValue; }
-    float currentLfoPitchSemi() const;   // semitones
-    float currentLfoPWOffset()  const;   // -0.4..+0.4
-    float currentLfoFilterMul() const;   // multiplier applied to cutoff
-
-    void update();   // call from loop(); applies pending modulation
-
-    void setPitchBend(float semitones);  // -2..+2 typical
-    void setModWheel(float amount);      // 0..1
+    float currentLfoPitchSemi() const;
+    float currentLfoPWOffset()  const;
+    float currentLfoFilterMul() const;
 
 private:
-    int findFreeVoice(uint8_t note);
+    int  findFreeVoice(uint8_t note);
     void applyChorus();
+    float effectiveLfoDepth() const {
+        float d = currentPatch.lfoDepth + (1.0f - currentPatch.lfoDepth) * modWheelAmt;
+        if (d > 1.0f) d = 1.0f;
+        return d;
+    }
 
     Voice voices[MAX_VOICES];
     PatchData currentPatch;
 
     // LFO state
     float lfoPhase = 0.0f;
-    float lfoValue = 0.0f;          // -1..+1
+    float lfoValue = 0.0f;
 
+    // ISR -> main-loop handoff
     volatile float modPitchSemi = 0.0f;
     volatile float modPWOff     = 0.0f;
     volatile float modFiltMul   = 1.0f;
     volatile bool  modDirty     = false;
 
-    float pitchBendSemi = 0.0f;   // current bend in semitones
-    float modWheelAmt   = 0.0f;   // 0..1
-    float effectiveLfoDepth() const {
-        // Base depth + mod wheel adds up to 1.0 when wheel is full
-        float d = currentPatch.lfoDepth + (1.0f - currentPatch.lfoDepth) * modWheelAmt;
-        if (d > 1.0f) d = 1.0f;
-        return d;
-    }
-
+    // Performance mod
+    float pitchBendSemi = 0.0f;
+    float modWheelAmt   = 0.0f;
 };
-
-float getPitchBendSemi() const { return pitchBendSemi; }
 
 extern SynthEngine synth;
