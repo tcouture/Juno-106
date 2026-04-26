@@ -72,8 +72,7 @@ When the user sweeps a slider or a CC changes, raw parameter jumps produce "zipp
 
     Pulse width uses a slightly faster smoother (coefficient 0.90).
 
-
-Glide / portamento
+## Glide / portamento
 
 When glideMs > 0 in the patch:
 
@@ -90,7 +89,7 @@ glideFreq = target + (glideFreq - target) * k;
 
 This gives per-voice polyphonic glide — unlike monosynth portamento, each voice independently slides to its own new pitch.
 
-Juno Chorus
+## Juno Chorus
 
 See the full dedicated discussion below. The effect lives entirely inside a custom AudioEffectJunoChorus block.
 
@@ -104,21 +103,22 @@ Input (mono) ─→ Pre-LPF ─→ + ─→ Delay Line L ─→ Post-LPF ─┬�
                   (parallel)  Delay Line R (anti-phase LFO)
 ```
 
-Characteristics
+### Characteristics
 
-Element 	Detail
-LFO shape 	Sine (anti-corner-artifact)
-LFO smoothing 	One-pole LP on the LFO itself (coeff 0.05) for silky motion
-Pre-LPF 	One-pole ~6 kHz (coeff 0.35) — mimics BBD input bandwidth
-Post-LPF 	One-pole ~4.5 kHz (coeff 0.28) — mimics BBD reconstruction
-Feedback 	12% of post-filter output fed back into write stage — analog coloration
-Delay lines 	2048 samples each, fractional reads with linear interpolation
-Chorus I 	0.513 Hz, ±22 sample modulation
-Chorus II 	0.863 Hz, ±36 sample modulation
+| Element |	Detail |
+|:--------|:-------|
+| LFO shape |	Sine (anti-corner-artifact) |
+| LFO smoothing |	One-pole LP on the LFO itself (coeff 0.05) for silky motion |
+| Pre-LPF |	One-pole ~6 kHz (coeff 0.35) — mimics BBD input bandwidth |
+| Post-LPF |	One-pole ~4.5 kHz (coeff 0.28) — mimics BBD reconstruction |
+| Feedback |	12% of post-filter output fed back into write stage — analog coloration |
+| Delay lines |	2048 samples each, fractional reads with linear interpolation |
+| Chorus I |	0.513 Hz, ±22 sample modulation |
+| Chorus II |	0.863 Hz, ±36 sample modulation |
 
 The opposite-phase LFOs on L and R produce the characteristic stereo spread of the original Juno chorus.
 
-Velocity routing
+## Velocity routing
 
 When a note arrives, the engine checks patch.velDest:
 

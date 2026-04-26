@@ -58,11 +58,11 @@ case 101: synth.setParam(ParamId::PitchBendRange, val / 127.0f * 24.0f); break;
 
 (You'd also need to add PitchBendRange to ParamId and handle it in setParam.)
 
-USB MIDI Device Name
+## USB MIDI Device Name
 
 Defined by the Teensy core. You'll see "Teensy MIDI" on your host. To change, edit usb_desc.c in the Teensy core — outside the scope of this project.
 
-Future MIDI features
+## Future MIDI features
 
 Planned (see ROADMAP.md):
 

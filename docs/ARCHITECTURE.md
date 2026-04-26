@@ -24,7 +24,7 @@
 ## Module responsibilities
 
 | Module | File(s) | Role |
-|--------|---------|------|
+|:-------|:--------|:-----|
 | `SynthEngine` | `SynthEngine.{h,cpp}` | Audio graph, voice management, patch application, LFO/pitch-bend/mod-wheel |
 | `Voice` | `Voice.{h,cpp}` | One polyphonic voice: DCO + LPF + VCA + envelopes, smoothing, glide |
 | `AudioEffectJunoChorus` | `AudioEffectJunoChorus.{h,cpp}` | Stereo chorus audio block |

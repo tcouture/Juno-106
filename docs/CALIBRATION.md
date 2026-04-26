@@ -57,7 +57,7 @@ struct TouchCalData {
 ```
 On load, the magic number is checked; mismatched files are ignored.
 
-Manual adjustment
+## Manual adjustment
 
 If auto-calibration isn't accurate, you can edit the defaults in Config.h:
 
@@ -70,7 +70,7 @@ If auto-calibration isn't accurate, you can edit the defaults in Config.h:
 
 These are only used as fallback; a calibration file overrides them.
 
-Troubleshooting
+## Troubleshooting
 
 Calibration seems "offset"
 - Re-run the wizard. Tap as precisely as possible on the crosshair centers.

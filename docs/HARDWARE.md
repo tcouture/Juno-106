@@ -13,8 +13,6 @@
 | 1 | 3.3 V power regulation (via USB or dedicated) | Teensy USB is fine for prototyping |
 | — | Jumper wires, perf board or custom PCB | |
 
----
-
 ## Pin Assignments
 
 All pin numbers are Teensy 4.1 digital pins.
@@ -71,9 +69,8 @@ The PJRC audio adapter uses fixed pins:
 | MIDI IN (RX)  | 25 (Serial6 RX) |
 | MIDI OUT (TX) | 24 (Serial6 TX) — optional, not used yet |
 
----
-
 ## Wiring Diagram
+
 ```
                   ┌─────────────────────┐
                   │     Teensy 4.1      │
@@ -97,15 +94,12 @@ The PJRC audio adapter uses fixed pins:
   Audio Adapter   │ 7, 8, 18-23 (fixed) │
                   └─────────────────────┘
 ```
----
 
 ## Power Considerations
 
 - The ILI9341 draws ~80 mA with backlight on. USB power from the Teensy is fine for prototyping.
 - For field use, consider a dedicated 5 V 1 A supply.
 - The audio adapter draws additional current when driving headphones; keep this in mind if batteries are involved.
-
----
 
 ## Future Expansion
 

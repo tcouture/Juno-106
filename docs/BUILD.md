@@ -38,18 +38,18 @@ lib_ldf_mode = deep+
 monitor_speed = 115200
 ```
 
-Configuring USB Type
+## Configuring USB Type
 
 In PlatformIO's Teensy build, USB type is controlled by the build flag -D USB_MIDI_SERIAL. This enables both a USB serial console (for debug) and USB MIDI. If you want MIDI-only, change to -D USB_MIDI.
 
-Building
+## Building
 ```bash
 pio run
 ```
 
 Should complete without warnings or errors on a clean repo.
 
-Uploading
+## Uploading
 
 With the Teensy plugged in:
 
@@ -59,7 +59,7 @@ pio run -t upload
 
 Or via the PlatformIO sidebar: PROJECT TASKS → teensy41 → Upload.
 
-First Boot
+## First Boot
 
 On first power-up with a fresh SD card:
 
@@ -84,7 +84,7 @@ to
 Then reflash. This prevents your edited patches from being overwritten
 every boot.
 
-Debug Output
+## Debug Output
 
 Open the serial monitor at 115200 baud:
 
@@ -101,7 +101,7 @@ Juno-106 emulator ready.
 
 plus any SD/calibration errors if something is wrong.
 
-Clean Build
+## Clean Build
 
 If you ever see mysterious link errors or library version weirdness:
 
