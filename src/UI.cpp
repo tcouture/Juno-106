@@ -170,7 +170,8 @@ static void drawSliderAt(const Slider& s) {
     } else {
         norm = (v - s.min) / (s.max - s.min);
     }
-    if (norm < 0) norm = 0; if (norm > 1) norm = 1;
+    if (norm < 0) norm = 0; 
+    if (norm > 1) norm = 1;
     int fillH = (int)((s.h - 2) * norm);
     tft.fillRect(s.x+1, s.y + s.h - 1 - fillH, s.w-2, fillH, ILI9341_ORANGE);
     tft.setTextColor(ILI9341_WHITE);
@@ -372,11 +373,12 @@ bool UI::confirmRecalibrate() {
     tft.drawRoundRect(noX, noY, btnW, btnH, 6, ILI9341_WHITE);
     tft.setCursor(noX + 26, noY + 9); tft.print("NO");
 
-    while (ts.touched()) delay(10); delay(80);
+    while (ts.touched()) delay(10);
+    delay(80);
     uint32_t start = millis();
     while (millis() - start < 10000) {
         if (ts.touched()) {
-            TS_Point p = ts.getPointRaw();
+            TS_Point p = ts.getPoint();
             int16_t sx, sy; touchCal.mapToScreen(p.x, p.y, sx, sy);
             while (ts.touched()) delay(10);
             if (sx >= yesX && sx <= yesX+btnW && sy >= yesY && sy <= yesY+btnH) return true;
@@ -420,7 +422,8 @@ void UI::handleTouch(int x, int y) {
     if (si >= 0) {
         Slider& s = pageSliders[si];
         float norm = 1.0f - (float)(y - s.y) / (float)s.h;
-        if (norm < 0) norm = 0; if (norm > 1) norm = 1;
+        if (norm < 0) norm = 0; 
+        if (norm > 1) norm = 1;
         float v;
         if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
             v = s.min * powf(s.max / s.min, norm);
@@ -522,7 +525,7 @@ void UI::handleTouch(int x, int y) {
 
 void UI::update() {
     if (ts.touched()) {
-        TS_Point p = ts.getPointRaw();
+        TS_Point p = ts.getPoint();
         int16_t sx, sy;
         touchCal.mapToScreen(p.x, p.y, sx, sy);
         handleTouch(sx, sy);

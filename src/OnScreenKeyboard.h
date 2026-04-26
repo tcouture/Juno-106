@@ -36,7 +36,6 @@ private:
 
     void buildLayout();
     int  hitTestKey(int x, int y) const;
-    void pressKey(int i);
     void insertChar(char c);
     void backspace();
 };

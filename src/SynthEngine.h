@@ -60,6 +60,8 @@ public:
     float currentLfoPWOffset()  const;   // -0.4..+0.4
     float currentLfoFilterMul() const;   // multiplier applied to cutoff
 
+    void update();   // call from loop(); applies pending modulation
+
 private:
     int findFreeVoice(uint8_t note);
     void applyChorus();
@@ -70,6 +72,11 @@ private:
     // LFO state
     float lfoPhase = 0.0f;
     float lfoValue = 0.0f;          // -1..+1
+
+    volatile float modPitchSemi = 0.0f;
+    volatile float modPWOff     = 0.0f;
+    volatile float modFiltMul   = 1.0f;
+    volatile bool  modDirty     = false;
 };
 
 extern SynthEngine synth;

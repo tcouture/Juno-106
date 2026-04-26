@@ -44,3 +44,7 @@
 
 // ---------- Patch storage ----------
 #define NUM_PATCH_SLOTS 32
+
+// ---------- Touch calibration triggers ----------
+#define FORCE_TOUCH_RECAL    false   // true: always run wizard on boot
+#define RECAL_ON_BOOT_TOUCH  true    // true: holding screen at boot re-runs wizard

@@ -1,3 +1,4 @@
+#include <math.h>
 #include "Voice.h"
 
 static float midiToFreq(uint8_t note) {
@@ -62,7 +63,14 @@ void Voice::noteOff() {
     released = true;
     releaseMs = millis();
     releaseStartVal = estimateFiltEnv();
-    active = false;
+    // Keep active=true during release so stealing prefers truly free voices
+    releasing = true;
+    // active stays true; we clear it when we detect release is done
+}
+
+bool Voice::isFullyDone() const {
+    if (!releasing) return false;
+    return (millis() - releaseMs) >= (uint32_t)(filtR + 20);
 }
 
 void Voice::setWaveMix(float s, float p, float u) {

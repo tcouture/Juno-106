@@ -29,7 +29,7 @@ void OnScreenKeyboard::buildLayout() {
     auto addRow = [&](const char* lower, const char* upper, int y, int startX) {
         const char* row = shift ? upper : lower;
         int n = strlen(row);
-        int keyW = 28;
+        int keyW = 27;
         int x = startX;
         for (int i = 0; i < n; i++) {
             if (keyCount >= MAX_KEYS) return;
@@ -59,11 +59,11 @@ void OnScreenKeyboard::buildLayout() {
         k.action = action;
     };
 
-    addSpecial("SH",     2, 10, 40);
-    addSpecial("SPACE",  3, 54, 120);
-    addSpecial("BS",     1, 178, 38);
-    addSpecial("CNCL",   5, 220, 44);
-    addSpecial("OK",     4, 268, 44);
+    addSpecial("SH",    2,  10, 44);
+    addSpecial("SPACE", 3,  58, 120);
+    addSpecial("BS",    1, 182, 40);
+    addSpecial("CNCL",  5, 226, 42);
+    addSpecial("OK",    4, 272, 42);
 }
 
 void OnScreenKeyboard::drawKeys() {
@@ -153,7 +153,7 @@ bool OnScreenKeyboard::edit(const char* title, const char* initialText,
 
     while (true) {
         if (ts_->touched()) {
-            TS_Point p = ts_->getPointRaw();
+            TS_Point p = ts_->getPoint();
             int16_t sx, sy;
             touchCal.mapToScreen(p.x, p.y, sx, sy);
             int idx = hitTestKey(sx, sy);

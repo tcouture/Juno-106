@@ -1,4 +1,6 @@
+#include <math.h>
 #include "SynthEngine.h"
+#include "AudioEffectJunoChorus.h"
 #include <vector>
 
 // ---- Per-voice audio graph ----
@@ -19,7 +21,6 @@ AudioFilterStateVariable hpf;
 
 // Juno chorus: two modulated delays in parallel with opposite-phase LFOs.
 // AudioEffectChorus needs a delay buffer.
-#include "AudioEffectJunoChorus.h"
 AudioEffectJunoChorus junoChorus;
 
 // Dry/wet mixers per side
@@ -144,17 +145,17 @@ void SynthEngine::applyPatch(const PatchData& p) {
 static inline float fastSin(float x) { return sinf(x); }
 
 void SynthEngine::controlTick() {
-    // Advance LFO
+    // Advance LFO (unchanged)
     float dt = 1.0f / (float)CONTROL_RATE_HZ;
     lfoPhase += currentPatch.lfoRate * dt;
     if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
 
     switch (currentPatch.lfoShape) {
-        case 1: lfoValue = fastSin(lfoPhase * 2.0f * PI); break;
+        case 1: lfoValue = sinf(lfoPhase * 2.0f * PI); break;
         case 2: lfoValue = (lfoPhase < 0.5f) ? 1.0f : -1.0f; break;
         case 3: lfoValue = 2.0f * lfoPhase - 1.0f; break;
         case 0:
-        default: { // triangle
+        default: {
             float x = lfoPhase * 4.0f;
             if      (x < 1.0f) lfoValue = x;
             else if (x < 3.0f) lfoValue = 2.0f - x;
@@ -162,16 +163,20 @@ void SynthEngine::controlTick() {
         }
     }
 
+    // Compute routing destinations (unchanged)
     float pitchSemi = 0, pwOff = 0, filtMul = 1.0f;
     if (currentPatch.lfoDest == LFO_DEST_PITCH)
-        pitchSemi = lfoValue * currentPatch.lfoDepth * 7.0f;   // up to ±7 semis
+        pitchSemi = lfoValue * currentPatch.lfoDepth * 7.0f;
     else if (currentPatch.lfoDest == LFO_DEST_PW)
         pwOff = lfoValue * currentPatch.lfoDepth * 0.4f;
     else if (currentPatch.lfoDest == LFO_DEST_FILTER)
-        filtMul = powf(2.0f, lfoValue * currentPatch.lfoDepth * 2.0f); // ±2 oct
+        filtMul = powf(2.0f, lfoValue * currentPatch.lfoDepth * 2.0f);
 
-    for (int i = 0; i < MAX_VOICES; i++)
-        voices[i].applyModulation(pitchSemi, pwOff, filtMul, 0.0f);
+    // ---- NEW: stash values, set flag, return. Do NOT touch voices here. ----
+    modPitchSemi = pitchSemi;
+    modPWOff     = pwOff;
+    modFiltMul   = filtMul;
+    modDirty     = true;
 }
 
 float SynthEngine::currentLfoPitchSemi() const {
@@ -185,4 +190,20 @@ float SynthEngine::currentLfoPWOffset() const {
 float SynthEngine::currentLfoFilterMul() const {
     return (currentPatch.lfoDest == LFO_DEST_FILTER)
         ? powf(2.0f, lfoValue * currentPatch.lfoDepth * 2.0f) : 1.0f;
+}
+
+void SynthEngine::update() {
+    if (!modDirty) return;
+
+    // Atomic read of the shared values
+    __disable_irq();
+    float ps = modPitchSemi;
+    float pw = modPWOff;
+    float fm = modFiltMul;
+    modDirty = false;
+    __enable_irq();
+
+    // Safe to touch audio objects here — we're in the main loop.
+    for (int i = 0; i < MAX_VOICES; i++)
+        voices[i].applyModulation(ps, pw, fm, 0.0f);
 }

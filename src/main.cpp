@@ -25,6 +25,6 @@ void setup() {
 
 void loop() {
     midiHandler.update();
+    synth.update();      // <-- NEW: applies any pending LFO/env modulation
     ui.update();
 }
-

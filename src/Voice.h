@@ -14,7 +14,8 @@ public:
 
     void noteOn(uint8_t note, uint8_t velocity);
     void noteOff();
-    bool     isActive()     const { return active; }
+    bool isActive()     const { return active; }
+    bool isFullyDone() const;
     uint8_t  getNote()      const { return currentNote; }
     uint32_t getStartTime() const { return startTime; }
 
@@ -47,6 +48,7 @@ private:
     AudioEffectEnvelope*      filtEnv_ = nullptr;
 
     bool     active = false;
+    bool     releasing = false;
     uint8_t  currentNote = 0;
     uint32_t startTime = 0;
 
