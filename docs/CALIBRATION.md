@@ -1,8 +1,3 @@
----
-
-## `docs/CALIBRATION.md`
-
-```markdown
 # Touch Calibration
 
 ## Why calibration matters
