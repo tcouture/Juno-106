@@ -53,7 +53,7 @@ Full build instructions in [docs/BUILD.md](docs/BUILD.md).
 📚 Documentation index
 
 | Document | Topic |
-|----------|-------|
+|:---------|:------|
 |[Hardware](docs/HARDWARE.md) | Wiring, pinout, BOM |
 |[Build & Setup](dosc/BUILD.md) | PlatformIO config, first boot|
 |[Architecture](docs/ARCHITECTURE.md) | Software structure and threading model|
@@ -72,7 +72,7 @@ Full build instructions in [docs/BUILD.md](docs/BUILD.md).
 🏗️ Project Status
 
 | Area | Status |
-|------|--------|
+|:-----|:-------|
 | Synth engine | ✅ 6-voice polyphonic, stable |
 | UI | ✅ 6 tabbed pages, touch-driven |
 | MIDI (USB + DIN) | ✅ Full note/CC/bend support |
