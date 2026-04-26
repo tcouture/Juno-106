@@ -1,70 +1,51 @@
 #pragma once
-#include <Audio.h>
-#include <AudioStream.h>
+#include <Arduino.h>
 
-// Stereo Juno-style chorus:
-//   * Two fractionally-delayed lines modulated by opposite-phase LFOs
-//   * Sine LFO (corner-free) with optional one-pole smoothing
-//   * Light feedback path -> subtle BBD-like coloration
-//   * Pre-chorus high-cut + output high-cut to emulate BBD bandwidth
-//
-// Input : one mono channel (index 0)
-// Output: stereo wet (L = 0, R = 1). Mix with dry externally.
-class AudioEffectJunoChorus : public AudioStream {
+enum ArpMode : uint8_t {
+    ARP_OFF  = 0,
+    ARP_UP   = 1,
+    ARP_DOWN = 2,
+    ARP_UPDN = 3,
+    ARP_RND  = 4
+};
+
+class Arpeggiator {
 public:
-    AudioEffectJunoChorus();
+    void begin();
+    void noteOn(uint8_t note, uint8_t velocity);
+    void noteOff(uint8_t note);
+    void tick(uint32_t nowMs);
 
-    static constexpr int BUFSIZE = 2048;  // ~46 ms @ 44.1 kHz
+    void setMode(ArpMode m);
+    void setRateHz(float hz);
+    void setOctaves(uint8_t o);
+    void setGate(float g) { if (g<0.05f)g=0.05f; if(g>0.95f)g=0.95f; gate=g; }
 
-    // mode: 0 = off, 1 = Chorus I, 2 = Chorus II
-    void setMode(uint8_t mode);
-    void setRate(float hz);
-    void setDepth(float smp);
-
-    virtual void update(void) override;
+    ArpMode getMode()    const { return mode; }
+    float   getRateHz()  const { return rateHz; }
+    uint8_t getOctaves() const { return octaves; }
 
 private:
-    audio_block_t* inputQueueArray[1];
+    static constexpr int MAX_HELD = 16;
+    uint8_t held[MAX_HELD];
+    uint8_t heldVel[MAX_HELD];
+    int     heldCount = 0;
 
-    // Delay lines
-    int16_t bufL[BUFSIZE];
-    int16_t bufR[BUFSIZE];
-    int     widx = 0;
+    ArpMode mode    = ARP_OFF;
+    float   rateHz  = 4.0f;
+    uint8_t octaves = 1;
+    float   gate    = 0.5f;
 
-    // LFO phase (0..1); second tap uses phase + 0.5
-    float lfoPhase = 0.0f;
+    int  stepIdx = 0;
+    int  octIdx  = 0;
+    bool goingUp = true;
 
-    // Smoothed LFO values (one-pole LP to round out any ISR-rate noise)
-    float lfoSmoothL = 0.0f;
-    float lfoSmoothR = 0.0f;
+    uint8_t  lastPlayedNote = 255;
+    uint32_t lastStepMs     = 0;
+    uint32_t noteOffDueMs   = 0;
 
-    // Pre-chorus high-cut (one-pole LPF) state, per side
-    float preLpL = 0.0f;
-    float preLpR = 0.0f;
-
-    // Output high-cut state, per side
-    float outLpL = 0.0f;
-    float outLpR = 0.0f;
-
-    // Feedback memory (one sample of delayed wet, per side)
-    float fbL = 0.0f;
-    float fbR = 0.0f;
-
-    // Parameters (set by setMode / setRate / setDepth)
-    volatile bool  active   = false;
-    volatile float lfoRate  = 0.513f;     // Hz
-    volatile float depthSmp = 22.0f;      // peak modulation (samples)
-    volatile float baseSmp  = 220.0f;     // center delay (samples)
-
-    // Tone/coloration constants
-    static constexpr float LFO_SMOOTH_COEFF  = 0.05f;  // ~3 ms
-    static constexpr float PRE_HICUT_COEFF   = 0.35f;  // ~6 kHz @ 44.1 kHz
-    static constexpr float OUT_HICUT_COEFF   = 0.28f;  // ~4.5 kHz
-    static constexpr float FEEDBACK_AMOUNT   = 0.12f;  // subtle; keep < 0.2
-
-    static inline int16_t satI16(int32_t v) {
-        if (v >  32767) return  32767;
-        if (v < -32768) return -32768;
-        return (int16_t)v;
-    }
+    void allOff();
+    int  advanceStep();
 };
+
+extern Arpeggiator arp;
