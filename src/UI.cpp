@@ -5,6 +5,7 @@
 #include "TouchCalibration.h"
 #include <ILI9341_t3.h>
 #include <XPT2046_Touchscreen.h>
+#include "OnScreenKeyboard.h"
 
 static ILI9341_t3 tft(TFT_CS, TFT_DC, TFT_RST);
 static XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
@@ -105,6 +106,8 @@ void UI::begin() {
     calBtnW = 48; calBtnH = 22;
     calBtnX = SCREEN_W - calBtnW - 4;
     calBtnY = 4;
+
+    osKeyboard.begin(&tft, &ts);
 
     drawAll();
 }
@@ -477,14 +480,32 @@ void UI::handleTouch(int x, int y) {
                 return;
             }
             if (y >= by2 && y <= by2 + bh) {
-                // Overwrite current patch into slot; name = "SLOT ##"
+                // Ask for a name via the on-screen keyboard
                 PatchData& p = synth.patch();
+                char seed[17];
                 if (p.name[0] == 0 || strcmp(p.name, "INIT PATCH") == 0) {
-                    snprintf(p.name, sizeof(p.name), "SLOT %02d", selectedSlot);
+                    snprintf(seed, sizeof(seed), "SLOT %02d", selectedSlot);
+                } else {
+                    strncpy(seed, p.name, 16); seed[16] = 0;
                 }
-                bool ok = patchManager.savePatch(selectedSlot, p);
-                showStatus(ok ? "SAVED" : "SAVE FAIL",
-                           ok ? ILI9341_DARKGREEN : ILI9341_MAROON);
+                char newName[17];
+                bool ok = osKeyboard.edit("Name patch:", seed, newName, sizeof(newName));
+                if (!ok) {
+                    drawAll();  // user cancelled
+                    return;
+                }
+                // Trim trailing spaces
+                for (int i = strlen(newName) - 1; i >= 0; i--) {
+                    if (newName[i] == ' ') newName[i] = 0; else break;
+                }
+                if (newName[0] == 0) strcpy(newName, "UNTITLED");
+                strncpy(p.name, newName, sizeof(p.name) - 1);
+                p.name[sizeof(p.name) - 1] = 0;
+
+                bool saved = patchManager.savePatch(selectedSlot, p);
+                drawAll();     // redraw full UI (was overwritten by keyboard)
+                showStatus(saved ? "SAVED" : "SAVE FAIL",
+                        saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
                 return;
             }
             if (y >= by3 && y <= by3 + bh) {

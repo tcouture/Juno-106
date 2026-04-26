@@ -19,11 +19,8 @@ AudioFilterStateVariable hpf;
 
 // Juno chorus: two modulated delays in parallel with opposite-phase LFOs.
 // AudioEffectChorus needs a delay buffer.
-#define CHORUS_DELAYLENGTH (16*AUDIO_BLOCK_SAMPLES)
-short chorusBufL[CHORUS_DELAYLENGTH];
-short chorusBufR[CHORUS_DELAYLENGTH];
-AudioEffectChorus chorusL;
-AudioEffectChorus chorusR;
+#include "AudioEffectJunoChorus.h"
+AudioEffectJunoChorus junoChorus;
 
 // Dry/wet mixers per side
 AudioMixer4 mixL, mixR;
@@ -68,19 +65,12 @@ void SynthEngine::begin() {
     // HPF: state-variable, use HP output (output 2)
     cables.push_back(new AudioConnection(preHPF, 0, hpf, 0));
 
-    // Chorus initialization
-    chorusL.begin(chorusBufL, CHORUS_DELAYLENGTH, 2);
-    chorusR.begin(chorusBufR, CHORUS_DELAYLENGTH, 2);
-
-    // Route HPF high-pass output (output index 2) to both chorus lines
-    cables.push_back(new AudioConnection(hpf, 2, chorusL, 0));
-    cables.push_back(new AudioConnection(hpf, 2, chorusR, 0));
-
-    // Dry + wet into per-side mixers
-    cables.push_back(new AudioConnection(hpf,     2, mixL, 0)); // dry L
-    cables.push_back(new AudioConnection(chorusL, 0, mixL, 1)); // wet L
-    cables.push_back(new AudioConnection(hpf,     2, mixR, 0)); // dry R
-    cables.push_back(new AudioConnection(chorusR, 0, mixR, 1)); // wet R
+    // Juno chorus: HPF HP output (out #2) -> chorus in -> stereo wet
+    cables.push_back(new AudioConnection(hpf,        2, junoChorus, 0));
+    cables.push_back(new AudioConnection(hpf,        2, mixL, 0));       // dry L
+    cables.push_back(new AudioConnection(junoChorus, 0, mixL, 1));       // wet L
+    cables.push_back(new AudioConnection(hpf,        2, mixR, 0));       // dry R
+    cables.push_back(new AudioConnection(junoChorus, 1, mixR, 1));       // wet R
 
     cables.push_back(new AudioConnection(mixL, 0, i2sOut, 0));
     cables.push_back(new AudioConnection(mixR, 0, i2sOut, 1));
@@ -127,15 +117,12 @@ void SynthEngine::allNotesOff() {
 }
 
 void SynthEngine::applyChorus() {
-    // Juno chorus: off / I (slow) / II (fast)
     uint8_t mode = currentPatch.chorusMode;
-    float wet = (mode == 0) ? 0.0f : 0.5f;
+    junoChorus.setMode(mode);
+    float wet = (mode == 0) ? 0.0f : 0.7f;
     float dry = (mode == 0) ? 1.0f : 0.7f;
     mixL.gain(0, dry); mixL.gain(1, wet);
-    mixR.gain(0, dry); mixR.gain(1, -wet); // phase-inverted wet for stereo spread
-    // The AudioEffectChorus's internal rate isn't runtime-adjustable, but "I" vs "II"
-    // is conveyed by wet amount / perceived rate. For a deeper change you can swap in
-    // AudioEffectFlange or a custom modulated-delay class.
+    mixR.gain(0, dry); mixR.gain(1, wet);
 }
 
 void SynthEngine::applyPatch(const PatchData& p) {
