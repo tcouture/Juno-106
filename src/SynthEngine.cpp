@@ -1,0 +1,201 @@
+#include "SynthEngine.h"
+#include <vector>
+
+// ---- Per-voice audio graph ----
+AudioSynthWaveform        saw[MAX_VOICES];
+AudioSynthWaveform        pulse[MAX_VOICES];
+AudioSynthWaveform        sub[MAX_VOICES];
+AudioMixer4               oscMix[MAX_VOICES];
+AudioFilterStateVariable  filt[MAX_VOICES];
+AudioEffectEnvelope       ampEnv[MAX_VOICES];
+AudioEffectEnvelope       fltEnv[MAX_VOICES];
+
+// Voice summing: 4 sub-mixers -> master
+AudioMixer4 subMix1, subMix2, subMix3, subMix4;
+AudioMixer4 preHPF;
+
+// HPF stage (state-variable filter, use HP output)
+AudioFilterStateVariable hpf;
+
+// Juno chorus: two modulated delays in parallel with opposite-phase LFOs.
+// AudioEffectChorus needs a delay buffer.
+#define CHORUS_DELAYLENGTH (16*AUDIO_BLOCK_SAMPLES)
+short chorusBufL[CHORUS_DELAYLENGTH];
+short chorusBufR[CHORUS_DELAYLENGTH];
+AudioEffectChorus chorusL;
+AudioEffectChorus chorusR;
+
+// Dry/wet mixers per side
+AudioMixer4 mixL, mixR;
+AudioOutputI2S i2sOut;
+AudioControlSGTL5000 codec;
+
+static std::vector<AudioConnection*> cables;
+
+// Timer for control-rate tick
+static IntervalTimer ctrlTimer;
+static void controlIsr() { synth.controlTick(); }
+
+SynthEngine synth;
+
+SynthEngine::SynthEngine() {}
+
+void SynthEngine::begin() {
+    AudioMemory(180);
+    codec.enable();
+    codec.volume(0.6f);
+
+    for (int i = 0; i < MAX_VOICES; i++) {
+        cables.push_back(new AudioConnection(saw[i],   0, oscMix[i], 0));
+        cables.push_back(new AudioConnection(pulse[i], 0, oscMix[i], 1));
+        cables.push_back(new AudioConnection(sub[i],   0, oscMix[i], 2));
+        cables.push_back(new AudioConnection(oscMix[i],0, filt[i],   0));
+        cables.push_back(new AudioConnection(filt[i],  0, ampEnv[i],0)); // LP out
+
+        AudioMixer4* target = (i<4)?&subMix1:(i<8)?&subMix2:(i<12)?&subMix3:&subMix4;
+        cables.push_back(new AudioConnection(ampEnv[i], 0, *target, i%4));
+
+        voices[i].init(&saw[i], &pulse[i], &sub[i],
+                       &oscMix[i], &filt[i], &ampEnv[i], &fltEnv[i]);
+    }
+
+    // Merge sub-mixers into preHPF
+    cables.push_back(new AudioConnection(subMix1, 0, preHPF, 0));
+    cables.push_back(new AudioConnection(subMix2, 0, preHPF, 1));
+    cables.push_back(new AudioConnection(subMix3, 0, preHPF, 2));
+    cables.push_back(new AudioConnection(subMix4, 0, preHPF, 3));
+
+    // HPF: state-variable, use HP output (output 2)
+    cables.push_back(new AudioConnection(preHPF, 0, hpf, 0));
+
+    // Chorus initialization
+    chorusL.begin(chorusBufL, CHORUS_DELAYLENGTH, 2);
+    chorusR.begin(chorusBufR, CHORUS_DELAYLENGTH, 2);
+
+    // Route HPF high-pass output (output index 2) to both chorus lines
+    cables.push_back(new AudioConnection(hpf, 2, chorusL, 0));
+    cables.push_back(new AudioConnection(hpf, 2, chorusR, 0));
+
+    // Dry + wet into per-side mixers
+    cables.push_back(new AudioConnection(hpf,     2, mixL, 0)); // dry L
+    cables.push_back(new AudioConnection(chorusL, 0, mixL, 1)); // wet L
+    cables.push_back(new AudioConnection(hpf,     2, mixR, 0)); // dry R
+    cables.push_back(new AudioConnection(chorusR, 0, mixR, 1)); // wet R
+
+    cables.push_back(new AudioConnection(mixL, 0, i2sOut, 0));
+    cables.push_back(new AudioConnection(mixR, 0, i2sOut, 1));
+
+    for (int i = 0; i < 4; i++) {
+        subMix1.gain(i, 0.25f); subMix2.gain(i, 0.25f);
+        subMix3.gain(i, 0.25f); subMix4.gain(i, 0.25f);
+        preHPF.gain(i,  0.9f);
+    }
+    mixL.gain(0, 1.0f); mixL.gain(1, 0.0f);
+    mixR.gain(0, 1.0f); mixR.gain(1, 0.0f);
+
+    hpf.frequency(currentPatch.hpfCutoff);
+    hpf.resonance(0.707f);
+
+    applyPatch(currentPatch);
+
+    // Start control-rate timer (microseconds per tick)
+    ctrlTimer.begin(controlIsr, 1000000UL / CONTROL_RATE_HZ);
+}
+
+int SynthEngine::findFreeVoice(uint8_t note) {
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (voices[i].isActive() && voices[i].getNote() == note) return i;
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (!voices[i].isActive()) return i;
+    int oldest = 0; uint32_t t = voices[0].getStartTime();
+    for (int i = 1; i < MAX_VOICES; i++)
+        if (voices[i].getStartTime() < t) { t = voices[i].getStartTime(); oldest = i; }
+    return oldest;
+}
+
+void SynthEngine::noteOn(uint8_t note, uint8_t velocity) {
+    if (velocity == 0) { noteOff(note); return; }
+    voices[findFreeVoice(note)].noteOn(note, velocity);
+}
+void SynthEngine::noteOff(uint8_t note) {
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (voices[i].isActive() && voices[i].getNote() == note)
+            voices[i].noteOff();
+}
+void SynthEngine::allNotesOff() {
+    for (int i = 0; i < MAX_VOICES; i++) voices[i].noteOff();
+}
+
+void SynthEngine::applyChorus() {
+    // Juno chorus: off / I (slow) / II (fast)
+    uint8_t mode = currentPatch.chorusMode;
+    float wet = (mode == 0) ? 0.0f : 0.5f;
+    float dry = (mode == 0) ? 1.0f : 0.7f;
+    mixL.gain(0, dry); mixL.gain(1, wet);
+    mixR.gain(0, dry); mixR.gain(1, -wet); // phase-inverted wet for stereo spread
+    // The AudioEffectChorus's internal rate isn't runtime-adjustable, but "I" vs "II"
+    // is conveyed by wet amount / perceived rate. For a deeper change you can swap in
+    // AudioEffectFlange or a custom modulated-delay class.
+}
+
+void SynthEngine::applyPatch(const PatchData& p) {
+    currentPatch = p;
+    for (int i = 0; i < MAX_VOICES; i++) {
+        voices[i].setWaveMix(p.sawLevel, p.pulseLevel, p.subLevel);
+        voices[i].setPulseWidth(p.pulseWidth);
+        voices[i].setFilterCutoff(p.cutoff);
+        voices[i].setFilterResonance(p.resonance);
+        voices[i].setAmpEnv(p.ampA, p.ampD, p.ampS, p.ampR);
+        voices[i].setFiltEnv(p.fltA, p.fltD, p.fltS, p.fltR);
+        voices[i].setEnvAmount(p.envAmount);
+    }
+    hpf.frequency(p.hpfCutoff);
+    applyChorus();
+}
+
+// Sine approximation fast enough for 1 kHz.
+static inline float fastSin(float x) { return sinf(x); }
+
+void SynthEngine::controlTick() {
+    // Advance LFO
+    float dt = 1.0f / (float)CONTROL_RATE_HZ;
+    lfoPhase += currentPatch.lfoRate * dt;
+    if (lfoPhase >= 1.0f) lfoPhase -= 1.0f;
+
+    switch (currentPatch.lfoShape) {
+        case 1: lfoValue = fastSin(lfoPhase * 2.0f * PI); break;
+        case 2: lfoValue = (lfoPhase < 0.5f) ? 1.0f : -1.0f; break;
+        case 3: lfoValue = 2.0f * lfoPhase - 1.0f; break;
+        case 0:
+        default: { // triangle
+            float x = lfoPhase * 4.0f;
+            if      (x < 1.0f) lfoValue = x;
+            else if (x < 3.0f) lfoValue = 2.0f - x;
+            else               lfoValue = x - 4.0f;
+        }
+    }
+
+    float pitchSemi = 0, pwOff = 0, filtMul = 1.0f;
+    if (currentPatch.lfoDest == LFO_DEST_PITCH)
+        pitchSemi = lfoValue * currentPatch.lfoDepth * 7.0f;   // up to ±7 semis
+    else if (currentPatch.lfoDest == LFO_DEST_PW)
+        pwOff = lfoValue * currentPatch.lfoDepth * 0.4f;
+    else if (currentPatch.lfoDest == LFO_DEST_FILTER)
+        filtMul = powf(2.0f, lfoValue * currentPatch.lfoDepth * 2.0f); // ±2 oct
+
+    for (int i = 0; i < MAX_VOICES; i++)
+        voices[i].applyModulation(pitchSemi, pwOff, filtMul, 0.0f);
+}
+
+float SynthEngine::currentLfoPitchSemi() const {
+    return (currentPatch.lfoDest == LFO_DEST_PITCH)
+        ? lfoValue * currentPatch.lfoDepth * 7.0f : 0.0f;
+}
+float SynthEngine::currentLfoPWOffset() const {
+    return (currentPatch.lfoDest == LFO_DEST_PW)
+        ? lfoValue * currentPatch.lfoDepth * 0.4f : 0.0f;
+}
+float SynthEngine::currentLfoFilterMul() const {
+    return (currentPatch.lfoDest == LFO_DEST_FILTER)
+        ? powf(2.0f, lfoValue * currentPatch.lfoDepth * 2.0f) : 1.0f;
+}
