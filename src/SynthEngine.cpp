@@ -120,6 +120,10 @@ void SynthEngine::allNotesOff() {
 void SynthEngine::applyChorus() {
     uint8_t mode = currentPatch.chorusMode;
     junoChorus.setMode(mode);
+    if (mode != 0) {
+        junoChorus.setRate(currentPatch.chorusRate);
+        junoChorus.setDepth(currentPatch.chorusDepth);
+    }
     float wet = (mode == 0) ? 0.0f : 0.7f;
     float dry = (mode == 0) ? 1.0f : 0.7f;
     mixL.gain(0, dry); mixL.gain(1, wet);
@@ -165,12 +169,16 @@ void SynthEngine::controlTick() {
 
     // Compute routing destinations (unchanged)
     float pitchSemi = 0, pwOff = 0, filtMul = 1.0f;
+    float depth = effectiveLfoDepth();
     if (currentPatch.lfoDest == LFO_DEST_PITCH)
-        pitchSemi = lfoValue * currentPatch.lfoDepth * 7.0f;
+        pitchSemi = lfoValue * depth * 7.0f;
     else if (currentPatch.lfoDest == LFO_DEST_PW)
-        pwOff = lfoValue * currentPatch.lfoDepth * 0.4f;
+        pwOff = lfoValue * depth * 0.4f;
     else if (currentPatch.lfoDest == LFO_DEST_FILTER)
-        filtMul = powf(2.0f, lfoValue * currentPatch.lfoDepth * 2.0f);
+        filtMul = powf(2.0f, lfoValue * depth * 2.0f);
+
+    // Combine pitch bend with LFO pitch modulation
+    pitchSemi += pitchBendSemi;
 
     // ---- NEW: stash values, set flag, return. Do NOT touch voices here. ----
     modPitchSemi = pitchSemi;
@@ -206,4 +214,14 @@ void SynthEngine::update() {
     // Safe to touch audio objects here — we're in the main loop.
     for (int i = 0; i < MAX_VOICES; i++)
         voices[i].applyModulation(ps, pw, fm, 0.0f);
+}
+
+void SynthEngine::setPitchBend(float semitones) {
+    pitchBendSemi = semitones;
+}
+
+void SynthEngine::setModWheel(float amount) {
+    if (amount < 0) amount = 0;
+    if (amount > 1) amount = 1;
+    modWheelAmt = amount;
 }

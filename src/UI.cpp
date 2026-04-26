@@ -50,6 +50,7 @@ static void buildOscSliders() {
     pageSliders[5] = { "LFO-D", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoDepth,   0.0f, 1.0f };
     pageSliderCount = 6;
 }
+
 static void buildVcfSliders() {
     PatchData& p = synth.patch();
     int x = 10;
@@ -59,6 +60,7 @@ static void buildVcfSliders() {
     pageSliders[3] = { "ENV",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f };
     pageSliderCount = 4;
 }
+
 static void buildEnvSliders() {
     PatchData& p = synth.patch();
     int x = 10;
@@ -72,10 +74,18 @@ static void buildEnvSliders() {
     pageSliders[7] = { "F-R",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.fltR, 0.0f, 5000.0f, true };
     pageSliderCount = 8;
 }
+
 static void buildChorusSliders() {
-    // Chorus page is mostly buttons, no continuous sliders.
-    pageSliderCount = 0;
+    PatchData& p = synth.patch();
+    // Only meaningful when chorus is on, but we show them always for easy tweaking
+    int x = 20;
+    int y = BODY_Y + 100;  // below the mode buttons
+    pageSliders[0] = { "RATE", x, y, SLIDER_W, SLIDER_H - 30, &p.chorusRate,  0.05f, 8.0f,  true };
+    x += SLIDER_W + 12;
+    pageSliders[1] = { "DEPTH", x, y, SLIDER_W, SLIDER_H - 30, &p.chorusDepth, 0.0f, 80.0f };
+    pageSliderCount = 2;
 }
+
 static void buildPageSliders(UIPage page) {
     switch (page) {
         case PAGE_OSC:    buildOscSliders(); break;
@@ -207,6 +217,7 @@ void UI::drawVcfPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
     for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
 }
+
 void UI::drawEnvPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
     // Section labels
@@ -216,23 +227,31 @@ void UI::drawEnvPage() {
     tft.setCursor(180, BODY_Y + 2); tft.print("FILTER ENV");
     for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
 }
+
 void UI::drawChorusPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
     const char* modes[] = { "OFF", "CHORUS I", "CHORUS II" };
     uint8_t cur = synth.patch().chorusMode;
-    int bw = 200, bh = 40, bx = (SCREEN_W - bw)/2;
-    int by = BODY_Y + 20;
+
+    // Three compact mode buttons in a single row at the top
+    int bw = 96, bh = 32, gap = 8;
+    int totalW = 3*bw + 2*gap;
+    int bx = (SCREEN_W - totalW)/2;
+    int by = BODY_Y + 10;
     tft.setTextSize(2);
     for (int i = 0; i < 3; i++) {
         uint16_t bg = (cur == i) ? ILI9341_ORANGE : ILI9341_DARKGREY;
-        int y = by + i*(bh + 12);
-        tft.fillRoundRect(bx, y, bw, bh, 6, bg);
-        tft.drawRoundRect(bx, y, bw, bh, 6, ILI9341_WHITE);
+        int xx = bx + i*(bw + gap);
+        tft.fillRoundRect(xx, by, bw, bh, 6, bg);
+        tft.drawRoundRect(xx, by, bw, bh, 6, ILI9341_WHITE);
         tft.setTextColor(ILI9341_WHITE);
         int tw = strlen(modes[i]) * 12;
-        tft.setCursor(bx + (bw - tw)/2, y + (bh - 14)/2);
+        tft.setCursor(xx + (bw - tw)/2, by + (bh - 14)/2);
         tft.print(modes[i]);
     }
+
+    // Sliders for RATE and DEPTH
+    for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
 }
 
 // --- Patch page (save/load) ---
@@ -275,11 +294,12 @@ void UI::drawPatchPage() {
     }
 
     // Action buttons on right
-    int bw = 96, bh = 36;
+    int bw = 96, bh = 30;
     int bx = SCREEN_W - bw - 6;
-    int by1 = BODY_Y + 20;
-    int by2 = by1 + bh + 10;
-    int by3 = by2 + bh + 10;
+    int by1 = BODY_Y + 10;
+    int by2 = by1 + bh + 6;
+    int by3 = by2 + bh + 6;
+    int by4 = by3 + bh + 6;
 
     auto drawBtn = [&](int y, const char* label, uint16_t bg) {
         tft.fillRoundRect(bx, y, bw, bh, 6, bg);
@@ -290,9 +310,11 @@ void UI::drawPatchPage() {
         tft.setCursor(bx + (bw - tw)/2, y + (bh - 14)/2);
         tft.print(label);
     };
-    drawBtn(by1, "LOAD", ILI9341_DARKGREEN);
-    drawBtn(by2, "SAVE", ILI9341_MAROON);
-    drawBtn(by3, "INIT", ILI9341_DARKGREY);
+
+    drawBtn(by1, "LOAD",   ILI9341_DARKGREEN);
+    drawBtn(by2, "SAVE",   ILI9341_MAROON);
+    drawBtn(by3, "RENAME", ILI9341_NAVY);
+    drawBtn(by4, "INIT",   ILI9341_DARKGREY);
 }
 
 int UI::patchSlotHitTest(int px, int py) const {
@@ -450,40 +472,54 @@ void UI::handleTouch(int x, int y) {
                 }
             }
         }
-    } else if (currentPage == PAGE_CHORUS) {
-        int bw = 200, bh = 40, bx = (SCREEN_W - bw)/2;
-        int by = BODY_Y + 20;
+        } else if (currentPage == PAGE_CHORUS) {
+        // Mode buttons (new compact row)
+        int bw = 96, bh = 32, gap = 8;
+        int totalW = 3*bw + 2*gap;
+        int bx = (SCREEN_W - totalW)/2;
+        int by = BODY_Y + 10;
         for (int i = 0; i < 3; i++) {
-            int yy = by + i*(bh+12);
-            if (x >= bx && x <= bx + bw && y >= yy && y <= yy + bh) {
-                synth.patch().chorusMode = (uint8_t)i;
-                synth.applyPatch(synth.patch());
+            int xx = bx + i*(bw + gap);
+            if (x >= xx && x <= xx + bw && y >= by && y <= by + bh) {
+                PatchData& p = synth.patch();
+                p.chorusMode = (uint8_t)i;
+                // Seed rate/depth with preset defaults when switching modes
+                if (i == 1)       { p.chorusRate = 0.513f; p.chorusDepth = 22.0f; }
+                else if (i == 2)  { p.chorusRate = 0.863f; p.chorusDepth = 36.0f; }
+                synth.applyPatch(p);
                 drawChorusPage();
                 return;
             }
         }
+        // Sliders (RATE, DEPTH) are handled by the generic sliderHitTest earlier.
+    }
     } else if (currentPage == PAGE_PATCH) {
         // Slot hit?
         int slot = patchSlotHitTest(x, y);
         if (slot >= 0) { onPatchSlotTap(slot); return; }
         // Action buttons
-        int bw = 96, bh = 36;
+        int bw = 96, bh = 30;
         int bx = SCREEN_W - bw - 6;
-        int by1 = BODY_Y + 20, by2 = by1 + bh + 10, by3 = by2 + bh + 10;
+        int by1 = BODY_Y + 10;
+        int by2 = by1 + bh + 6;
+        int by3 = by2 + bh + 6;
+        int by4 = by3 + bh + 6;
+
         if (x >= bx && x <= bx + bw) {
+            // LOAD
             if (y >= by1 && y <= by1 + bh) {
                 PatchData p;
                 if (patchManager.loadPatch(selectedSlot, p)) {
                     synth.applyPatch(p);
-                    drawHeader();   // patch name changed
+                    drawHeader();
                     showStatus("LOADED", ILI9341_DARKGREEN);
                 } else {
                     showStatus("EMPTY SLOT", ILI9341_MAROON);
                 }
                 return;
             }
+            // SAVE (prompts for name via keyboard)
             if (y >= by2 && y <= by2 + bh) {
-                // Ask for a name via the on-screen keyboard
                 PatchData& p = synth.patch();
                 char seed[17];
                 if (p.name[0] == 0 || strcmp(p.name, "INIT PATCH") == 0) {
@@ -493,25 +529,52 @@ void UI::handleTouch(int x, int y) {
                 }
                 char newName[17];
                 bool ok = osKeyboard.edit("Name patch:", seed, newName, sizeof(newName));
-                if (!ok) {
-                    drawAll();  // user cancelled
-                    return;
-                }
-                // Trim trailing spaces
+                if (!ok) { drawAll(); return; }
                 for (int i = strlen(newName) - 1; i >= 0; i--) {
                     if (newName[i] == ' ') newName[i] = 0; else break;
                 }
                 if (newName[0] == 0) strcpy(newName, "UNTITLED");
                 strncpy(p.name, newName, sizeof(p.name) - 1);
                 p.name[sizeof(p.name) - 1] = 0;
-
                 bool saved = patchManager.savePatch(selectedSlot, p);
-                drawAll();     // redraw full UI (was overwritten by keyboard)
+                drawAll();
                 showStatus(saved ? "SAVED" : "SAVE FAIL",
                         saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
                 return;
             }
+            // RENAME (loads slot, edits name, writes back)
             if (y >= by3 && y <= by3 + bh) {
+                PatchData p;
+                if (!patchManager.loadPatch(selectedSlot, p)) {
+                    showStatus("EMPTY SLOT", ILI9341_MAROON);
+                    return;
+                }
+                char newName[17];
+                bool ok = osKeyboard.edit("Rename patch:", p.name, newName, sizeof(newName));
+                if (!ok) { drawAll(); return; }
+                for (int i = strlen(newName) - 1; i >= 0; i--) {
+                    if (newName[i] == ' ') newName[i] = 0; else break;
+                }
+                if (newName[0] == 0) strcpy(newName, "UNTITLED");
+                strncpy(p.name, newName, sizeof(p.name) - 1);
+                p.name[sizeof(p.name) - 1] = 0;
+                bool saved = patchManager.savePatch(selectedSlot, p);
+
+                // If the renamed slot is the currently-loaded patch, update live name too
+                if (strcmp(synth.patch().name, p.name) != 0 &&
+                    selectedSlot >= 0) {
+                    // Heuristic: if live patch matches on other fields, sync name
+                    // (Simple approach: always update live name when renaming the
+                    //  selected slot — the user probably wants that.)
+                    strncpy(synth.patch().name, p.name, sizeof(synth.patch().name)-1);
+                }
+                drawAll();
+                showStatus(saved ? "RENAMED" : "RENAME FAIL",
+                        saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
+                return;
+            }
+            // INIT
+            if (y >= by4 && y <= by4 + bh) {
                 PatchData init;
                 synth.applyPatch(init);
                 drawHeader();

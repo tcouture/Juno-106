@@ -21,6 +21,9 @@ public:
 
     virtual void update(void) override;
 
+    void setRate(float hz);
+    void setDepth(float smp);
+
 private:
     audio_block_t* inputQueueArray[1];
 

@@ -36,8 +36,9 @@ struct PatchData {
     uint8_t lfoShape  = 0;         // 0=triangle,1=sine,2=square,3=saw
 
     // Chorus
-    uint8_t chorusMode = 0;        // 0=off, 1=I, 2=II
-};
+    uint8_t chorusMode  = 0;        // 0=off, 1=I, 2=II
+    float   chorusRate  = 0.513f;   // Hz  (override when mode != OFF)
+    float   chorusDepth = 22.0f;    // samples of peak modulation};
 
 class SynthEngine {
 public:
@@ -62,6 +63,9 @@ public:
 
     void update();   // call from loop(); applies pending modulation
 
+    void setPitchBend(float semitones);  // -2..+2 typical
+    void setModWheel(float amount);      // 0..1
+
 private:
     int findFreeVoice(uint8_t note);
     void applyChorus();
@@ -77,6 +81,18 @@ private:
     volatile float modPWOff     = 0.0f;
     volatile float modFiltMul   = 1.0f;
     volatile bool  modDirty     = false;
+
+    float pitchBendSemi = 0.0f;   // current bend in semitones
+    float modWheelAmt   = 0.0f;   // 0..1
+    float effectiveLfoDepth() const {
+        // Base depth + mod wheel adds up to 1.0 when wheel is full
+        float d = currentPatch.lfoDepth + (1.0f - currentPatch.lfoDepth) * modWheelAmt;
+        if (d > 1.0f) d = 1.0f;
+        return d;
+    }
+
 };
+
+float getPitchBendSemi() const { return pitchBendSemi; }
 
 extern SynthEngine synth;

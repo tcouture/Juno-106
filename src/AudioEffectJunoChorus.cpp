@@ -113,3 +113,16 @@ void AudioEffectJunoChorus::update(void) {
     release(in);
 }
 
+void AudioEffectJunoChorus::setRate(float hz) {
+    if (hz < 0.05f) hz = 0.05f;
+    if (hz > 8.0f)  hz = 8.0f;
+    lfoRate = hz;
+}
+
+void AudioEffectJunoChorus::setDepth(float smp) {
+    if (smp < 0.0f)  smp = 0.0f;
+    if (smp > 80.0f) smp = 80.0f;  // stay well within BUFSIZE margin
+    depthSmp = smp;
+}
+
+
