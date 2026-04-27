@@ -3,80 +3,107 @@
 ## Layout
 
 ```
-
-┌───────────────────────────────────────────────────────────┐
-│ JUNO-106  <patch name>                         [ CAL ]    │ 30 px  HEADER
-├───────────────────────────────────────────────────────────┤
-│  OSC   VCF   ENV   CHO   PRF   PAT                        │ 24 px  TABS
-├───────────────────────────────────────────────────────────┤
-│                                                           │
-│                       (page body)                         │ 186 px BODY
-│                                                           │
-└───────────────────────────────────────────────────────────┘
++-----------------------------------------------------------+
+| CPU 14% ooo  BRASS STAB  | | U D H   [CAL]                | 26 px HEADER
+|         ooo                                               |
++-----------------------------------------------------------+
+| PATCH  OSC  VCF  ENV  CHORUS  PERF                        | 20 px TABS
++-----------------------------------------------------------+
+|                                                           |
+|                       (page body)                         | 194 px BODY
+|                                                           |
++-----------------------------------------------------------+
 ```
 
-Screen: 320×240 landscape.
+Screen: 320x240 landscape, rotated 180 degrees via `DISPLAY_ROTATION 3`.
+
+## Header status bar
+
+Five distinct zones:
+
+| Zone | Shows |
+|------|-------|
+| CPU % | `CPU NN%`, updated at 10 Hz from `AudioProcessorUsage()` |
+| Voice dots | 2-row grid, auto-sized for voice count. Green = held, yellow = releasing, dark grey = idle |
+| Patch name | Centered between voice dots and meter |
+| Stereo peak meter | Two thin vertical bars, green/yellow/red zones, peak-hold ticks |
+| MIDI activity | 3 dots labeled U/D/H -- flash their source color on incoming events |
+| CAL button | Opens touch calibration confirm dialog |
+
+MIDI indicator colors:
+- **U** (green) = USB device (Teensy -> computer)
+- **D** (magenta) = DIN Serial6
+- **H** (cyan) = USB host (keyboard -> Teensy)
 
 ## Tabs
 
-| Tab | Page | Role |
-|-----|------|------|
-| OSC | Oscillators & LFO | Waveform mix, PW, LFO rate/depth, LFO destination, glide |
-| VCF | Filter | HPF, cutoff, resonance, env amount |
-| ENV | Envelopes & velocity | Amp ADSR, Filter ADSR, velocity destination + amount |
-| CHO | Chorus | Mode (OFF/I/II) + rate + depth |
-| PRF | Performance | Arpeggiator mode, rate, octaves |
-| PAT | Patches | 32-slot grid + LOAD / SAVE / RENAME / INIT |
+| Tab | Role |
+|-----|------|
+| PATCH | 32-slot grid + LOAD / SAVE / RENAME / INIT |
+| OSC | Oscillator mix, PW, LFO, glide |
+| VCF | HPF, cutoff, resonance, env amount, drive |
+| ENV | Amp ADSR + Filter ADSR + velocity routing |
+| CHORUS | Mode (OFF/I/II) + rate + depth |
+| PERF | Arpeggiator + MIDI channel |
 
-## Sliders
+Active tab has a deep-blue fill with orange accent underline. Inactive tabs are charcoal.
 
-Sliders are vertical with a filled orange bar showing the current value. Touching anywhere on the slider sets the value relative to where you touched. Logarithmic sliders (e.g. cutoff, rate) are internally mapped with a log scale so small values at the low end get fine resolution.
+## OSC page
+
+- 7 sliders: SAW, PUL, SUB, PW, LFO-R, LFO-D, GLIDE
+- LFO DEST strip at bottom-right: OFF / PIT / PW / FIL
+
+## VCF page
+
+- 5 sliders: HPF, CUT, RES, ENV, DRIVE
+
+## ENV page
+
+- 8 sliders: A-A, A-D, A-S, A-R (amp ADSR) + F-A, F-D, F-S, F-R (filter ADSR) + 1 V-AMT
+- Section labels: "AMP ENV", "FILTER ENV", "VEL"
+- VEL DEST strip at bottom-right: OFF / VCA / CUT / LFO
+
+## CHORUS page
+
+- Mode buttons: OFF / CHORUS I / CHORUS II
+- 2 sliders: RATE, DEPTH (active when mode != OFF)
+
+## PERF page
+
+Two clearly separated sections:
+
+### Arpeggiator
+- 5 mode buttons: OFF / UP / DN / UD / RND
+- RATE row with -/+ steppers (0.5-16 Hz)
+- OCT row with -/+ steppers (1-4 octaves)
+
+### MIDI (below a divider line)
+- CH row with -/+ steppers (0 = ALL, 1-16 = specific channel)
+
+## PATCH page
+
+- 2-column x 16-row slot grid, single-line "NN NAME" layout
+- Orange fill = currently selected slot
+- Cyan border = currently loaded slot
+- Dim grey fill = empty slot
+- Action buttons on right: LOAD / SAVE / RENAME / INIT
+- SAVE and RENAME open the on-screen keyboard for naming
 
 ## Modal dialogs
 
-- **CAL confirm**: appears when the CAL header button is tapped. Touching outside the YES/NO area cancels.
-- **On-screen keyboard**: appears for SAVE and RENAME on the PATCH page. Supports lowercase, uppercase (via SHIFT), digits, space, backspace, OK/CANCEL.
-- **Status toast**: a 700 ms centered message after major actions (LOADED, SAVED, RENAMED, INIT PATCH, EMPTY SLOT).
+- **CAL confirm**: YES/NO dialog before running the calibration wizard
+- **On-screen keyboard**: for SAVE/RENAME, with shift, digits, symbols, backspace, OK/CANCEL
+- **Status toast**: 700 ms centered message after LOAD/SAVE/RENAME/INIT
 
 ## Touch handling
 
-- Touch is polled at ~60 Hz (`16 ms` minimum interval) to avoid CPU saturation.
-- Raw XPT2046 coordinates are passed through `TouchCalibration::mapToScreen()` which handles axis swap, invert, and min/max scaling.
-- Sliders use a fast-path: `synth.setParam(ParamId, value)` instead of full `applyPatch()`, so dragging is smooth.
+- Polled at ~60 Hz (16 ms minimum interval)
+- Raw XPT2046 coordinates run through `TouchCalibration::mapToScreen()` (handles axis swap, invert, scaling)
+- Sliders use `synth.setParam()` fast path -- no full `applyPatch()` per touch event
 
 ## Drawing strategy
 
-- Only the tab's own page body is redrawn on page switch.
-- Sliders redraw individually on touch — the rest of the page is untouched.
-- The header is refreshed every 500 ms to keep the patch name current after renames.
-
-## The CAL button
-
-Located in the header's top-right corner. Tapping it opens a confirmation dialog. Confirming runs the full 3-corner calibration wizard. See [`CALIBRATION.md`](CALIBRATION.md).
-
-## Page-specific controls
-
-### OSC
-- 7 sliders: SAW, PUL, SUB, PW, LFO-R, LFO-D, GLIDE
-- LFO destination buttons on the right: OFF / PITCH / PW / FILT
-
-### VCF
-- 4 sliders: HPF, CUT, RES, ENV (env amount)
-
-### ENV
-- 8 sliders: A-A, A-D, A-S, A-R (amp env) + F-A, F-D, F-S, F-R (filter env)
-- 1 slider: V-AMT (velocity amount)
-- VEL DEST buttons at the bottom: OFF / VCA / CUT / LFO
-
-### CHORUS
-- 3 mode buttons: OFF / CHORUS I / CHORUS II
-- 2 sliders: RATE, DEPTH (active when mode ≠ OFF)
-
-### PERF (Arpeggiator)
-- 5 mode buttons: OFF / UP / DN / UD / RND
-- RATE and OCT with - / + stepper buttons
-
-### PATCH
-- 32-slot grid (populated slots show patch name; empty slots show "(empty)")
-- Action buttons on the right: LOAD / SAVE / RENAME / INIT
-- Tapping a slot selects it (highlighted in orange); the action buttons operate on the selected slot.
+- Full screen only redrawn on page switch
+- Sliders redraw individually on touch
+- Header CPU / voice dots / meter / MIDI activity refresh every 100 ms
+- Full header redraw only triggered when the patch name changes

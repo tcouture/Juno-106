@@ -8,7 +8,7 @@ Each patch is a binary dump of the `PatchData` struct, written to:
 
 where `NNN` is the 3-digit, zero-padded slot number (000 through 031).
 
-### `PatchData` struct layout
+### PatchData struct fields
 
 Defined in `SynthEngine.h`:
 
@@ -29,62 +29,61 @@ struct PatchData {
 };
 ````
 
-~80 bytes per patch. Total space for 32 slots: ~2.5 kB. Trivial for any SD card.
+~88 bytes per patch. 32 slots = ~2.8 kB on SD.
 
-### Slot grid
+## Slot grid
 
-The PATCH page displays all 32 slots. Slot color:
+Displayed on the PATCH page as a 2x16 grid. Visual states:
 
-    Orange: currently selected
-    Navy: occupied
-    Dark grey: empty
+- **Orange fill**: currently selected slot
+- **Cyan border**: currently loaded slot (live patch came from here)
+- **Navy fill**: occupied
+- **Dark grey fill**: empty
 
+The selected slot and the loaded slot are independent -- this lets you audition naming or properties of other slots without changing what's playing.
 
-### Actions
+## Actions
 
-    LOAD: reads the selected slot into the live patch.
-    SAVE: prompts for a name (keyboard) then writes the live patch to the selected slot.
-    RENAME: prompts for a new name for the selected slot's stored patch (and updates the live patch name if it was the currently-loaded slot).
-    INIT: resets the live patch to defaults. Does not write to SD; you must SAVE after if you want to persist.
+- **LOAD**: reads the selected slot into the live patch.
+- **SAVE**: prompts for a name (keyboard) then writes the live patch to the selected slot.
+- **RENAME**: prompts for a new name for the selected slot's stored patch.
+- **INIT**: resets the live patch to defaults. Does NOT write to SD.
 
-## Factory patches
-
-Ten starter patches are installed on first boot (controlled by INSTALL_FACTORY_ON_BOOT in Config.h):
+## Factory patches (22 presets)
 
 | Slot | Name | Character |
-|:-----|:-----|:----------|
-|0 | BRASS STAB |	Short, bright, filter env + velocity to cutoff |
-| 1 |	WARM PAD |	Slow attack, chorus II, gentle LFO-filter |
-| 2 |	PLUCKY BASS |	Short release, heavy sub, no chorus |
-| 3 |	SYNC LEAD |	Narrow PW, pitch LFO, mild glide |
-| 4 |	STRINGS |	Slow swell, chorus II, big sound |
-| 5 |	ORGAN |	Flat envelopes, sub heavy, Chorus I |
-| 6 |	FAT SAWS |	Thick PWM, slight detune LFO |
-| 7 |	BELL TINES |	Narrow PW, long release, no sustain |
-| 8 |	PERCUSSIVE |	Very short env, velocity to cutoff, punchy |
-| 9 |	DREAMY LFO |	Slow filter LFO, chorus II, light glide |
+|------|------|-----------|
+| 0  | BRASS STAB   | Bright filter stab, velocity -> cutoff |
+| 1  | WARM PAD     | Slow attack, chorus II, LFO -> filter |
+| 2  | PLUCKY BASS  | Heavy sub, snappy envelope, no chorus |
+| 3  | SYNC LEAD    | Narrow PW, pitch LFO, mild glide |
+| 4  | STRINGS      | Slow swell, chorus II |
+| 5  | ORGAN        | Flat envelopes, sub heavy, Chorus I |
+| 6  | FAT SAWS     | Thick PWM, slight detune LFO |
+| 7  | BELL TINES   | Narrow PW, long release, no sustain |
+| 8  | PERCUSSIVE   | Very short env, velocity -> cutoff |
+| 9  | DREAMY LFO   | Slow filter LFO, chorus II |
+| 10 | SUPERSAW     | Saw + pulse stacked, chorus II, subtle pitch LFO |
+| 11 | WOOD KEYS    | Narrow PW, high resonance, velocity-sensitive |
+| 12 | SUB BASS     | Pure sub, round bottom-end |
+| 13 | RESO SWEEP   | High Q, slow filter envelope open |
+| 14 | GLASS PAD    | Shimmery, chorus II, sine filter LFO |
+| 15 | LFO WOBBLE   | Fast filter LFO (dubstep territory) |
+| 16 | DETUNE LEAD  | Pitch LFO, mild glide, velocity -> cutoff |
+| 17 | CHIME        | Bell-like, long release, bright |
+| 18 | FAT ARP      | Dense mix, short envelope for arp work |
+| 19 | SOFT FLUTE   | Pure pulse, vibrato, gentle |
+| 20 | DARK PAD     | Low filter, slow LFO, chorus II |
+| 21 | ACID         | High Q, snappy env, glide (classic 303-ish) |
 
-Slots 10–31 are empty. Overwrite freely.
+Slots 22-31 are empty -- overwrite freely.
 
-Rolling your own factory patches
+## Rolling your own factory patches
 
-Edit src/FactoryPatches.cpp. Each block sets fields of a PatchData struct and calls patchManager.savePatch(slot, p). The makePatch(p, "NAME") helper resets to defaults before your tweaks, so you only need to specify what differs.
+Edit `src/FactoryPatches.cpp`. Each block sets fields of a `PatchData` struct and calls `patchManager.savePatch(slot, p)`. The `makePatch(p, "NAME")` helper resets to defaults first.
 
-Tips:
-
-    Use INSTALL_FACTORY_ON_BOOT 1 during development to rewrite patches each boot.
-    Set back to 0 for shipped/deployed code.
+During development, set `INSTALL_FACTORY_ON_BOOT 1` to rewrite patches every boot. Flip to `0` once the patch set is finalized to protect subsequent user edits.
 
 ## Backing up patches
 
-Eject the SD card from the audio adapter. Mount it on a PC. Copy the /patches/ folder somewhere safe. Patches are just binary files — no special tooling required.
-
-## Troubleshooting empty grid on first boot
-
-If you're seeing all "(empty)" slots after first boot:
-
-- Check SD card is in the audio adapter slot, not the Teensy onboard slot.
-- Verify SD is FAT32 formatted.
-- Check serial monitor for "SD (audio shield) init failed".
-- Confirm INSTALL_FACTORY_ON_BOOT is 1 in Config.h.
-
+Eject the SD card from the audio adapter, mount on a PC, copy `/patches/` somewhere safe. Patches are plain binary files.

@@ -2,39 +2,37 @@
 
 ## Near-term (small, high-value)
 
-- [ ] **MIDI channel selection** — per-patch or global setting for MIDI RX channel
-- [ ] **MIDI clock sync** — arpeggiator locks to incoming MIDI clock
-- [ ] **MIDI Learn** — long-press a slider, wiggle a CC, bind persistently to SD
-- [ ] **Sustain pedal** (CC 64) handling
-- [ ] **Expanded factory patch set** — grow from 10 to 20+ presets
+- [ ] **MIDI clock sync** -- arpeggiator locks to incoming MIDI clock
+- [ ] **MIDI Learn** -- long-press a slider, wiggle a CC, bind persistently to SD
+- [ ] **SysEx dump / load** -- MIDI-based patch exchange with DAWs
+- [ ] **Polyphonic aftertouch** -- per-voice filter / amp modulation
+- [ ] **Sustain pedal polarity setting** -- for inverted-polarity pedals
 
-## Medium-term (meaningful effort)
+## Medium-term
 
-- [ ] **Stereo VU meter** in the header using `AudioAnalyzePeak`
-- [ ] **Hardware encoders** (quadrature) for primary parameters (cutoff, resonance, env amount)
-- [ ] **Hardware buttons** for tab navigation and patch up/down
-- [ ] **Multi-patch morph** — interpolate between two patches via a wheel or CC
-- [ ] **Chorus bypass crossfade** — avoid click when enabling/disabling
+- [ ] **Sequencer page** -- 16-step sequencer per patch
+- [ ] **Multi-patch morph** -- interpolate between two patches via CC
+- [ ] **Hardware encoders** for primary parameters (cutoff, resonance, env amount)
+- [ ] **Hardware buttons** for tab navigation and patch recall
+- [ ] **Chorus bypass crossfade** -- avoid click when enabling/disabling
+- [ ] **Parameter lock / performance mode** -- prevent accidental touches during play
 
-## Long-term (big features)
+## Long-term
 
-- [ ] **Sequencer page** — step sequencer with 16-note patterns per patch
-- [ ] **SysEx dump / load** — MIDI-based patch exchange with DAWs
-- [ ] **Wavetable oscillator option** — expand beyond basic Juno waveforms
-- [ ] **Effects page** — add delay and reverb sends
-- [ ] **Stereo voice panning** — position each note in the stereo field
-- [ ] **Polyphonic aftertouch** — per-voice filter / amp modulation
+- [ ] **Per-oscillator waveform selection** (currently fixed saw+pulse+sub-square, Juno-authentic)
+- [ ] **Effects page** -- delay and reverb sends
+- [ ] **Stereo voice panning** -- position each note in the stereo field
+- [ ] **Wavetable oscillator option** -- expand beyond the base Juno waveforms
 
 ## Audio-quality enhancements
 
-- [ ] **Band-limited oscillators** — eliminate aliasing at high notes
-- [ ] **Soft saturation / drive** on master output
-- [ ] **Better filter models** — Moor-ladder emulation, diode-ladder option
-- [ ] **True analog-style drift** — tiny per-voice detuning for organic feel
+- [ ] **Moog-ladder filter model** (or diode-ladder alternative)
+- [ ] **Analog-style voice drift** -- tiny per-voice detuning for organic feel
+- [ ] **Asymmetric soft clipper option** -- tube-amp character for drive
 
 ## UX polish
 
-- [ ] **Patch browser with preview** — hold tap to audition before LOAD
+- [ ] **Patch browser with preview** -- hold tap to audition before LOAD
 - [ ] **Undo/redo** on parameter changes
 - [ ] **Lock overlay** to prevent accidental touches during performance
 - [ ] **Brightness control** for the TFT backlight (if PWM-capable)
@@ -44,7 +42,7 @@
 - [ ] **Photos and demo video** in README
 - [ ] **3D-printable case design**
 - [ ] **PCB design** for a finished unit
-- [ ] **LICENSE file** (MIT recommended)
+- [ ] **LICENSE file**
 - [ ] **CONTRIBUTING.md** guide
 
 ---

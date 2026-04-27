@@ -1,9 +1,10 @@
+cat > docs/CALIBRATION.md << 'DOCEOF'
 # Touch Calibration
 
 ## Why calibration matters
 
-The XPT2046 touch controller reports raw ADC values (0–4095 per axis) that
-don't directly map to screen pixels. The mapping depends on:
+The XPT2046 reports raw ADC values (0-4095 per axis) that don't directly map to
+screen pixels. The mapping depends on:
 
 - How the touch panel was laminated to the LCD (may swap X/Y)
 - Display rotation
@@ -13,36 +14,36 @@ Calibration learns the mapping and stores it on SD.
 
 ## When calibration runs
 
-The wizard runs automatically if:
+Automatically if:
 
 1. No `/patches/touchcal.bin` exists on SD, or
-2. `FORCE_TOUCH_RECAL` in `Config.h` is `true`, or
-3. The user is holding the screen during boot (`RECAL_ON_BOOT_TOUCH true`).
+2. `FORCE_TOUCH_RECAL true` in `Config.h`, or
+3. The user holds the screen during boot (`RECAL_ON_BOOT_TOUCH true`).
 
-You can also trigger it manually anytime by tapping the **CAL** button in the top-right of the screen.
+Manually: tap the CAL button in the header's top-right corner.
 
 ## The wizard
 
-Three crosshairs appear sequentially at the corners:
+Three crosshairs appear sequentially at corners:
 
 1. Top-left
 2. Top-right
 3. Bottom-left
 
-For each: touch directly on the center of the crosshair, as precisely as you can. The system:
+For each: touch directly on the crosshair center. The system:
 
-- Waits for a clean touch
-- Averages 16 consecutive raw readings
-- Waits for you to lift
+- Waits for a touch
+- Averages 16 raw readings
+- Waits for release
 - Moves to the next corner
 
-After the third tap, it:
+After the third tap:
 
-- Computes whether axes need swapping (by checking which raw axis varied most on the TL→TR move)
-- Computes whether each axis needs inverting
-- Extrapolates the 20-pixel inset out to the true screen edges
-- Writes the calibration to `/patches/touchcal.bin`
-- Shows a brief verify mode where you can tap anywhere to see the mapped position
+- Auto-detects X/Y swap (by checking which raw axis varied most TL->TR)
+- Auto-detects per-axis inversion
+- Extrapolates the 20-pixel inset to the true screen edges
+- Saves to `/patches/touchcal.bin`
+- Enters a brief verify mode (tap anywhere to see the mapped position)
 
 ## Storage format
 
@@ -55,11 +56,11 @@ struct TouchCalData {
     uint8_t  invertY;
 };
 ```
-On load, the magic number is checked; mismatched files are ignored.
+Magic-number-checked on load.
 
 ## Manual adjustment
 
-If auto-calibration isn't accurate, you can edit the defaults in Config.h:
+Fallback defaults in `Config.h`:
 
 ```cpp
 #define TOUCH_RAW_XMIN 300
@@ -68,24 +69,26 @@ If auto-calibration isn't accurate, you can edit the defaults in Config.h:
 #define TOUCH_RAW_YMAX 3800
 ```
 
-These are only used as fallback; a calibration file overrides them.
+These are only used if no calibration file exists.
+
+## After changing display rotation
+
+If you change `DISPLAY_ROTATION`, re-run the calibration wizard (the raw->pixel mapping changes).
 
 ## Troubleshooting
 
-Calibration seems "offset"
-- Re-run the wizard. Tap as precisely as possible on the crosshair centers.
+### Offset calibration
+Re-run the wizard. Tap precisely on crosshair centers.
 
-Touch is mirrored (left/right or up/down swapped)
-- Re-run the wizard. It auto-detects these cases.
+### Mirrored touch
+Re-run the wizard -- it auto-detects mirroring.
 
-Calibration keeps running every boot
-- Check SD card is present and writable.
-- Confirm /patches/ directory is created (should be automatic).
-- Check serial monitor for "SD save failed" after the wizard.
+### Calibration keeps running every boot
+- Check SD card present and writable
+- Verify `/patches/` directory was created
+- Check serial for "SD save failed"
 
-No touch response at all
-- Verify T_IRQ (pin 2) wiring.
-- Verify T_CS (pin 41) wiring.
-- Check that MOSI/MISO/SCK are shared with the display on pins 11/12/13.
-- Try setting FORCE_TOUCH_RECAL true to force the wizard and observe its behavior.
-
+### No touch response
+- Verify T_IRQ on pin 2 and T_CS on pin 41
+- Check MOSI/MISO/SCK are on pins 11/12/13
+- Try `FORCE_TOUCH_RECAL true` to force the wizard and observe its behavior
