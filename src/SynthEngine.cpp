@@ -31,6 +31,10 @@ SynthEngine synth;
 
 SynthEngine::SynthEngine() {}
 
+float SynthEngine::cpuUsagePercent() {
+    return AudioProcessorUsage();
+}
+
 void SynthEngine::begin() {
     AudioMemory(200);
     codec.enable();

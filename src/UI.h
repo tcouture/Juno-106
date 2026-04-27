@@ -2,12 +2,12 @@
 #include <Arduino.h>
 
 enum UIPage : uint8_t {
-    PAGE_OSC = 0,
+    PAGE_PATCH = 0,
+    PAGE_OSC,
     PAGE_VCF,
     PAGE_ENV,
     PAGE_CHORUS,
     PAGE_PERF,
-    PAGE_PATCH,
     PAGE_COUNT
 };
 
@@ -17,6 +17,10 @@ public:
     void update();
     void drawAll();
     void recalibrateTouch();
+
+    // Let main.cpp indicate which slot was loaded at boot so the UI
+    // can highlight it with the "loaded" border.
+    void setLoadedSlot(int slot) { loadedSlot = slot; }
 
 private:
     void drawHeader();
@@ -42,11 +46,24 @@ private:
     int  patchSlotHitTest(int x, int y) const;
     void onPatchSlotTap(int slotIdx);
 
-    UIPage currentPage = PAGE_OSC;
+    UIPage  currentPage = PAGE_PATCH;
+
     int16_t calBtnX = 0, calBtnY = 0, calBtnW = 0, calBtnH = 0;
 
     int selectedSlot = 0;
+    int loadedSlot   = -1;          // -1 = no stored slot is currently loaded
     uint32_t lastNames = 0;
+
+    // Header layout (recomputed in begin() so it scales with MAX_VOICES)
+    int16_t hdrCpuX = 0, hdrCpuY = 0, hdrCpuW = 0;
+    int16_t hdrDotsX = 0, hdrDotsY = 0;
+    int16_t hdrDotRadius = 0, hdrDotPitch = 0;
+    int16_t hdrNameX = 0;
+    uint8_t hdrDotsPerRow = 0;
+
+    void computeHeaderLayout();
+    void drawHeaderVoiceDots();
+    void drawHeaderCpu();
 };
 
 extern UI ui;

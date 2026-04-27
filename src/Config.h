@@ -24,8 +24,8 @@
 #define MIDI_BAUD   31250
 
 // ---------- Display & Touch orientation ----------
-#define DISPLAY_ROTATION 1
-#define TOUCH_ROTATION   1
+#define DISPLAY_ROTATION 3
+#define TOUCH_ROTATION   3
 
 #define SCREEN_W 320
 #define SCREEN_H 240

@@ -97,6 +97,12 @@ public:
     float currentLfoPWOffset()  const;
     float currentLfoFilterMul() const;
 
+    int  voiceCount() const { return MAX_VOICES; }
+    bool isVoiceSounding(int i) const {
+        return (i >= 0 && i < MAX_VOICES) ? voices[i].isSounding() : false;
+    }
+    float cpuUsagePercent();
+
 private:
     int  findFreeVoice(uint8_t note);
     void applyChorus();

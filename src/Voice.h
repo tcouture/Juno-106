@@ -39,6 +39,8 @@ public:
                          float lfoFilterMul,
                          float filtEnvValue);
 
+    bool isSounding() const { return active || (releasing && !isFullyDone()); }
+
 private:
     AudioSynthWaveform*       saw_ = nullptr;
     AudioSynthWaveform*       pulse_ = nullptr;

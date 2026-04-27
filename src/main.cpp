@@ -18,11 +18,16 @@ void setup() {
     if (!patchManager.begin()) {
         Serial.println("Patch storage unavailable; running without SD.");
     } else {
-#if INSTALL_FACTORY_ON_BOOT
+    #if INSTALL_FACTORY_ON_BOOT
         installFactoryPatches();
-#endif
-        PatchData p;
-        if (patchManager.loadPatch(0, p)) synth.applyPatch(p);
+    #endif
+
+    PatchData p;
+    
+    if (patchManager.loadPatch(0, p)) {
+        synth.applyPatch(p);
+        ui.setLoadedSlot(0);         // <-- NEW
+        }
     }
 
     ui.begin();
