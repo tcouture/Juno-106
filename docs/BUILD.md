@@ -2,13 +2,12 @@
 
 ## Prerequisites
 
-- [Visual Studio Code](https://code.visualstudio.com/)
-- [PlatformIO IDE extension](https://platformio.org/install/ide?install=vscode)
-- [Teensy Loader (CLI or GUI)](https://www.pjrc.com/teensy/loader.html)
+- Visual Studio Code
+- PlatformIO IDE extension
+- Teensy Loader (CLI or GUI)
 - A microSD card (any capacity), formatted FAT32
 
 ## Cloning
-
 ```bash
 git clone https://github.com/<your-user>/Juno-106.git
 cd Juno-106
@@ -16,15 +15,17 @@ cd Juno-106
 
 platformio.ini
 
-The project ships with a known-good configuration pinned to a compatible Teensy platform and core. The Audio library is taken from the core, not from a separate GitHub download — this avoids a common version-skew issue.
+The project ships with a known-good configuration pinned to a compatible
+Teensy platform and core:
 
 ```ini
 [env:teensy41]
-platform = teensy@^5.0.0
+platform = teensy
 board = teensy41
 framework = arduino
 
 board_build.f_cpu = 600000000L
+board_build.usbtype = USB_MIDI_SERIAL
 
 build_flags =
     -D USB_MIDI_SERIAL
@@ -38,16 +39,19 @@ lib_ldf_mode = deep+
 monitor_speed = 115200
 ```
 
-## Configuring USB Type
+Key points:
 
-In PlatformIO's Teensy build, USB type is controlled by the build flag -D USB_MIDI_SERIAL. This enables both a USB serial console (for debug) and USB MIDI. If you want MIDI-only, change to -D USB_MIDI.
+- `board_build.usbtype = USB_MIDI_SERIAL` enables both USB serial (for debug console) and USB MIDI device mode.
+- USB host support uses `USBHost_t36`, which ships with the Teensy core — no separate dependency needed.
+- Audio library likewise ships with the Teensy core and should NOT be added to `lib_deps` (avoids version skew).
 
 ## Building
+
 ```bash
 pio run
 ```
 
-Should complete without warnings or errors on a clean repo.
+Should complete cleanly. Warnings about `dspinst.h` internals (from the Audio library) are harmless.
 
 ## Uploading
 
@@ -57,19 +61,21 @@ With the Teensy plugged in:
 pio run -t upload
 ````
 
-Or via the PlatformIO sidebar: PROJECT TASKS → teensy41 → Upload.
+Or via the PlatformIO sidebar: PROJECT TASKS -> teensy41 -> Upload.
 
 ## First Boot
 
 On first power-up with a fresh SD card:
 
-1. The touch calibration wizard appears (3 corner crosshairs). Tap each accurately. Values are saved to /patches/touchcal.bin.
-2. The factory patch installer writes 10 starter patches to slots 0–9 (controlled by INSTALL_FACTORY_ON_BOOT in Config.h).
+1. The touch calibration wizard appears (3 corner crosshairs).
+   Tap each precisely. Values are saved to `/patches/touchcal.bin`.
+2. The factory patch installer writes 22 starter patches to slots 0-21
+   (controlled by `INSTALL_FACTORY_ON_BOOT` in `Config.h`).
 3. The synth loads slot 0 and is ready to play.
 
-After First Successful Boot
+## After First Successful Boot
 
-Edit src/Config.h and change:
+Edit `src/Config.h`:
 
 ```cpp
 #define INSTALL_FACTORY_ON_BOOT 1
@@ -81,8 +87,7 @@ to
 #define INSTALL_FACTORY_ON_BOOT 0
 ```
 
-Then reflash. This prevents your edited patches from being overwritten
-every boot.
+Then reflash. This prevents factory patches from overwriting your edits every boot.
 
 ## Debug Output
 
@@ -92,14 +97,15 @@ Open the serial monitor at 115200 baud:
 pio device monitor
 ```
 
-You'll see:
+Expected log:
 
 ```
-Installed 10 factory patches.
+Installed 22 factory patches.
+USB Host MIDI started. Plug in a keyboard.
 Juno-106 emulator ready.
 ```
 
-plus any SD/calibration errors if something is wrong.
+SD failures, USB host status, and calibration events also print here.
 
 ## Clean Build
 
