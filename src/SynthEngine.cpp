@@ -22,6 +22,9 @@ AudioMixer4 mixL, mixR;
 AudioOutputI2S i2sOut;
 AudioControlSGTL5000 codec;
 
+AudioAnalyzePeak peakL;
+AudioAnalyzePeak peakR;
+
 static std::vector<AudioConnection*> cables;
 
 static IntervalTimer ctrlTimer;
@@ -33,6 +36,13 @@ SynthEngine::SynthEngine() {}
 
 float SynthEngine::cpuUsagePercent() {
     return AudioProcessorUsage();
+}
+
+float SynthEngine::peakLevelL() {
+    return peakL.available() ? peakL.read() : 0.0f;
+}
+float SynthEngine::peakLevelR() {
+    return peakR.available() ? peakR.read() : 0.0f;
 }
 
 void SynthEngine::begin() {
@@ -69,6 +79,9 @@ void SynthEngine::begin() {
 
     cables.push_back(new AudioConnection(mixL, 0, i2sOut, 0));
     cables.push_back(new AudioConnection(mixR, 0, i2sOut, 1));
+
+    cables.push_back(new AudioConnection(mixL, 0, peakL, 0));
+    cables.push_back(new AudioConnection(mixR, 0, peakR, 0));
 
     for (int i = 0; i < 4; i++) {
         subMix1.gain(i, 0.25f); subMix2.gain(i, 0.25f);

@@ -101,7 +101,23 @@ public:
     bool isVoiceSounding(int i) const {
         return (i >= 0 && i < MAX_VOICES) ? voices[i].isSounding() : false;
     }
+    enum class VoiceState : uint8_t {
+    Idle      = 0,
+    Held      = 1,
+    Releasing = 2
+    };
+
+    VoiceState voiceState(int i) const {
+        if (i < 0 || i >= MAX_VOICES) return VoiceState::Idle;
+        if (voices[i].isHeld())      return VoiceState::Held;
+        if (voices[i].isReleasing()) return VoiceState::Releasing;
+        return VoiceState::Idle;
+    }
+
     float cpuUsagePercent();
+
+    float peakLevelL();   // returns 0..1, consumes the peak
+    float peakLevelR();
 
 private:
     int  findFreeVoice(uint8_t note);

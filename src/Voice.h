@@ -40,6 +40,8 @@ public:
                          float filtEnvValue);
 
     bool isSounding() const { return active || (releasing && !isFullyDone()); }
+    bool isHeld() const      { return active && !releasing; }
+    bool isReleasing() const { return releasing && !isFullyDone(); }
 
 private:
     AudioSynthWaveform*       saw_ = nullptr;

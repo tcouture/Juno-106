@@ -64,6 +64,18 @@ private:
     void computeHeaderLayout();
     void drawHeaderVoiceDots();
     void drawHeaderCpu();
+
+    // Meter layout
+    int16_t meterX = 0, meterY = 0, meterW = 0, meterH = 0;
+    float   meterPeakL = 0.0f, meterPeakR = 0.0f;
+    float   meterHoldL = 0.0f, meterHoldR = 0.0f;
+    uint32_t meterHoldMsL = 0, meterHoldMsR = 0;
+
+    void drawHeaderMeter();
+
+    // MIDI activity indicators
+    int16_t midiActX = 0, midiActY = 0;
+    void drawMidiActivity();
 };
 
 extern UI ui;

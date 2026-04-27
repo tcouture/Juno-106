@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "SynthEngine.h"
 #include "MidiHandler.h"
+#include "UsbHostMidi.h"       // <-- NEW
 #include "UI.h"
 #include "PatchManager.h"
 #include "Arpeggiator.h"
@@ -13,20 +14,19 @@ void setup() {
 
     synth.begin();
     midiHandler.begin();
+    hostMidi.begin();          // <-- NEW
     arp.begin();
 
     if (!patchManager.begin()) {
         Serial.println("Patch storage unavailable; running without SD.");
     } else {
-    #if INSTALL_FACTORY_ON_BOOT
+#if INSTALL_FACTORY_ON_BOOT
         installFactoryPatches();
-    #endif
-
-    PatchData p;
-    
-    if (patchManager.loadPatch(0, p)) {
-        synth.applyPatch(p);
-        ui.setLoadedSlot(0);         // <-- NEW
+#endif
+        PatchData p;
+        if (patchManager.loadPatch(0, p)) {
+            synth.applyPatch(p);
+            ui.setLoadedSlot(0);
         }
     }
 
@@ -36,6 +36,7 @@ void setup() {
 
 void loop() {
     midiHandler.update();
+    hostMidi.update();         // <-- NEW
     synth.update();
     arp.tick(millis());
     ui.update();

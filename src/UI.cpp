@@ -7,6 +7,7 @@
 #include "OnScreenKeyboard.h"
 #include <ILI9341_t3.h>
 #include <XPT2046_Touchscreen.h>
+#include "MidiActivity.h"
 
 static ILI9341_t3 tft(TFT_CS, TFT_DC, TFT_RST);
 static XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
@@ -47,9 +48,20 @@ static constexpr int DEST_BTN_H   = 18;
 static constexpr int DEST_BTN_GAP = 3;
 
 // Header colors
-static constexpr uint16_t DOT_ON_COLOR   = ILI9341_ORANGE;
-static constexpr uint16_t DOT_OFF_COLOR  = 0x2104;         // very dark grey
-static constexpr uint16_t CPU_TEXT_COLOR = ILI9341_WHITE;
+static constexpr uint16_t DOT_HELD_COLOR      = ILI9341_GREEN;
+static constexpr uint16_t DOT_RELEASING_COLOR = ILI9341_YELLOW;
+static constexpr uint16_t DOT_OFF_COLOR       = 0x2104;   // very dark grey
+static constexpr uint16_t CPU_TEXT_COLOR      = ILI9341_WHITE;
+static constexpr uint16_t METER_BG_COLOR   = 0x2104;
+static constexpr uint16_t METER_BAR_COLOR  = ILI9341_GREEN;
+static constexpr uint16_t METER_LOUD_COLOR = ILI9341_YELLOW;
+static constexpr uint16_t METER_CLIP_COLOR = ILI9341_RED;
+static constexpr uint16_t METER_HOLD_COLOR = ILI9341_WHITE;
+static constexpr uint16_t MIDI_ACT_USBDEV_COLOR = ILI9341_GREEN;
+static constexpr uint16_t MIDI_ACT_USBHOST_COLOR = ILI9341_CYAN;
+static constexpr uint16_t MIDI_ACT_DIN_COLOR     = ILI9341_MAGENTA;
+static constexpr uint16_t MIDI_ACT_OFF_COLOR     = 0x2104;
+static constexpr uint16_t MIDI_ACT_LABEL_COLOR   = ILI9341_WHITE;
 
 static const char* pageNames[PAGE_COUNT] = { "PAT", "OSC", "VCF", "ENV", "CHO", "PRF" };
 
@@ -196,14 +208,11 @@ void UI::begin() {
 void UI::computeHeaderLayout() {
     const int N = synth.voiceCount();
 
-    // Two rows of voice dots. Top row gets the "extra" when N is odd.
     hdrDotsPerRow = (uint8_t)((N + 1) / 2);
-
-    // Scale dot size down if polyphony is large.
     hdrDotRadius = (hdrDotsPerRow <= 8) ? 2 : 1;
     hdrDotPitch  = (hdrDotRadius == 2) ? 6 : 4;
 
-    const int cpuTextW  = 7 * 6;    // "CPU 99%" = 7 chars × 6 px
+    const int cpuTextW  = 7 * 6;
     const int leftMargin = 4;
 
     hdrCpuX = leftMargin;
@@ -212,12 +221,24 @@ void UI::computeHeaderLayout() {
 
     hdrDotsX = hdrCpuX + hdrCpuW + 6;
 
-    int rowsHeight = (hdrDotRadius * 2) * 2 + 2;   // two rows + 2 px gap
+    int rowsHeight = (hdrDotRadius * 2) * 2 + 2;
     hdrDotsY = (HEADER_H - rowsHeight) / 2 + hdrDotRadius;
 
     int dotsW = hdrDotsPerRow * hdrDotPitch;
-
     hdrNameX = hdrDotsX + dotsW + 8;
+
+    // MIDI activity indicator block: 3 dots with 1-char labels above them.
+    // Goes immediately left of the CAL button.
+    // Each column is 10 px wide, 3 columns + 2 gaps = 30 px + a little padding.
+    const int midiActBlockW = 32;
+    midiActX = calBtnX - midiActBlockW - 6;
+    midiActY = 2;   // near top of header
+
+    // Stereo meter: placed immediately left of the MIDI activity block
+    meterW = 32;
+    meterH = HEADER_H - 8;
+    meterX = midiActX - meterW - 6;
+    meterY = (HEADER_H - meterH) / 2;
 }
 
 void UI::drawCalButton(bool pressed) {
@@ -248,6 +269,115 @@ void UI::drawHeaderCpu() {
     tft.print(buf);
 }
 
+void UI::drawMidiActivity() {
+    // Clear the block
+    tft.fillRect(midiActX, 0, 32, HEADER_H, ILI9341_NAVY);
+
+    struct SrcInfo {
+        MidiSource src;
+        const char* label;
+        uint16_t color;
+    };
+    static const SrcInfo srcs[3] = {
+        { MidiSource::UsbDevice, "U", MIDI_ACT_USBDEV_COLOR  },
+        { MidiSource::Din,       "D", MIDI_ACT_DIN_COLOR     },
+        { MidiSource::UsbHost,   "H", MIDI_ACT_USBHOST_COLOR },
+    };
+
+    const int colW    = 10;
+    const int radius  = 2;
+    const int labelY  = midiActY;
+    const int dotY    = midiActY + 12;    // below the label
+
+    tft.setTextSize(1);
+
+    for (int i = 0; i < 3; i++) {
+        int cx = midiActX + i * colW + colW / 2;
+
+        // Label
+        tft.setTextColor(MIDI_ACT_LABEL_COLOR);
+        tft.setCursor(cx - 3, labelY);    // 3 px = half of 6-px char width
+        tft.print(srcs[i].label);
+
+        // Dot: color fades with recent activity
+        float k = midiActivity.intensity(srcs[i].src);
+        uint16_t c;
+        if (k <= 0.0f) {
+            c = MIDI_ACT_OFF_COLOR;
+        } else {
+            // Blend srcs[i].color toward black as k drops
+            uint8_t r = ((srcs[i].color >> 11) & 0x1F);
+            uint8_t g = ((srcs[i].color >> 5)  & 0x3F);
+            uint8_t b = ( srcs[i].color        & 0x1F);
+            r = (uint8_t)(r * k);
+            g = (uint8_t)(g * k);
+            b = (uint8_t)(b * k);
+            c = (uint16_t)((r << 11) | (g << 5) | b);
+            if (c == 0) c = MIDI_ACT_OFF_COLOR;
+        }
+        tft.fillCircle(cx, dotY, radius, c);
+    }
+}
+
+void UI::drawHeaderMeter() {
+    // Consume peak readings
+    float pL = synth.peakLevelL();
+    float pR = synth.peakLevelR();
+
+    // Smooth the displayed level (fast attack, slow release)
+    const float attack  = 0.6f;
+    const float release = 0.15f;
+
+    meterPeakL += (pL > meterPeakL) ? (pL - meterPeakL) * attack
+                                    : (pL - meterPeakL) * release;
+    meterPeakR += (pR > meterPeakR) ? (pR - meterPeakR) * attack
+                                    : (pR - meterPeakR) * release;
+
+    // Peak-hold: latch the highest value, then decay after 800 ms
+    uint32_t now = millis();
+    if (pL >= meterHoldL) { meterHoldL = pL; meterHoldMsL = now; }
+    else if (now - meterHoldMsL > 800) { meterHoldL *= 0.92f; }
+
+    if (pR >= meterHoldR) { meterHoldR = pR; meterHoldMsR = now; }
+    else if (now - meterHoldMsR > 800) { meterHoldR *= 0.92f; }
+
+    // Two vertical bars side by side
+    int barW = (meterW - 2) / 2;
+    int gapX = 2;
+    int lx = meterX;
+    int rx = meterX + barW + gapX;
+
+    auto drawOne = [&](int bx, float lvl, float hold) {
+        // Background
+        tft.fillRect(bx, meterY, barW, meterH, METER_BG_COLOR);
+        tft.drawRect(bx, meterY, barW, meterH, ILI9341_DARKGREY);
+
+        // Clamp
+        if (lvl < 0) lvl = 0;
+        if (lvl > 1) lvl = 1;
+        if (hold < 0) hold = 0;
+        if (hold > 1) hold = 1;
+
+        int fillH = (int)((meterH - 2) * lvl);
+        if (fillH > 0) {
+            // Color zones: green <0.7, yellow <0.9, red >=0.9
+            uint16_t c = METER_BAR_COLOR;
+            if (lvl >= 0.9f)      c = METER_CLIP_COLOR;
+            else if (lvl >= 0.7f) c = METER_LOUD_COLOR;
+            tft.fillRect(bx + 1, meterY + meterH - 1 - fillH, barW - 2, fillH, c);
+        }
+
+        // Peak-hold tick
+        if (hold > 0.02f) {
+            int hy = meterY + meterH - 1 - (int)((meterH - 2) * hold);
+            tft.drawFastHLine(bx + 1, hy, barW - 2, METER_HOLD_COLOR);
+        }
+    };
+
+    drawOne(lx, meterPeakL, meterHoldL);
+    drawOne(rx, meterPeakR, meterHoldR);
+}
+
 void UI::drawHeaderVoiceDots() {
     const int N = synth.voiceCount();
     for (int i = 0; i < N; i++) {
@@ -255,7 +385,14 @@ void UI::drawHeaderVoiceDots() {
         int col = (i < hdrDotsPerRow) ? i : (i - hdrDotsPerRow);
         int cx  = hdrDotsX + col * hdrDotPitch + hdrDotRadius;
         int cy  = hdrDotsY + row * (hdrDotRadius * 2 + 2);
-        uint16_t c = synth.isVoiceSounding(i) ? DOT_ON_COLOR : DOT_OFF_COLOR;
+
+        uint16_t c = DOT_OFF_COLOR;
+        switch (synth.voiceState(i)) {
+            case SynthEngine::VoiceState::Held:      c = DOT_HELD_COLOR;      break;
+            case SynthEngine::VoiceState::Releasing: c = DOT_RELEASING_COLOR; break;
+            case SynthEngine::VoiceState::Idle:
+            default:                                 c = DOT_OFF_COLOR;       break;
+        }
         tft.fillCircle(cx, cy, hdrDotRadius, c);
     }
 }
@@ -272,7 +409,7 @@ void UI::drawHeader() {
 
     const char* name = synth.patch().name;
     int nameW  = strlen(name) * 6;
-    int availW = calBtnX - hdrNameX - 6;
+    int availW = meterX - hdrNameX - 6;
     int nx     = hdrNameX + (availW - nameW) / 2;
     if (nx < hdrNameX) nx = hdrNameX;
 
@@ -280,6 +417,7 @@ void UI::drawHeader() {
     tft.print(name);
 
     drawCalButton(false);
+    drawHeaderMeter();
 }
 
 void UI::drawTabs() {
@@ -789,6 +927,8 @@ void UI::update() {
         lastMeterMs = now;
         drawHeaderCpu();
         drawHeaderVoiceDots();
+        drawHeaderMeter();
+        drawMidiActivity();    // <-- NEW
     }
 
     // Full header redraw only when the patch name actually changes
