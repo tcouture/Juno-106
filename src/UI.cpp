@@ -48,6 +48,8 @@ static constexpr int DEST_BTN_H   = 18;
 static constexpr int DEST_BTN_GAP = 3;
 
 // Header colors
+
+static constexpr uint16_t HEADER_BG      =  0x10B5;
 static constexpr uint16_t DOT_HELD_COLOR      = ILI9341_GREEN;
 static constexpr uint16_t DOT_RELEASING_COLOR = ILI9341_YELLOW;
 static constexpr uint16_t DOT_OFF_COLOR       = 0x2104;   // very dark grey
@@ -63,7 +65,14 @@ static constexpr uint16_t MIDI_ACT_DIN_COLOR     = ILI9341_MAGENTA;
 static constexpr uint16_t MIDI_ACT_OFF_COLOR     = 0x2104;
 static constexpr uint16_t MIDI_ACT_LABEL_COLOR   = ILI9341_WHITE;
 
-static const char* pageNames[PAGE_COUNT] = { "PAT", "OSC", "VCF", "ENV", "CHO", "PRF" };
+static constexpr uint16_t TAB_ACTIVE_BG   = 0x10B5;   // deep blue
+static constexpr uint16_t TAB_ACTIVE_FG   = ILI9341_WHITE;
+static constexpr uint16_t TAB_ACTIVE_EDGE = ILI9341_ORANGE;
+static constexpr uint16_t TAB_INACTIVE_BG = 0x18E3;   // charcoal
+static constexpr uint16_t TAB_INACTIVE_FG = 0x9CD3;   // muted blue-grey
+static constexpr uint16_t TAB_SEP_COLOR   = 0x2D7F;   // darker accent line
+
+static const char* pageNames[PAGE_COUNT] = { "PATCH", "OSC", "VCF", "ENV", "CHORUS", "PERF" };
 
 // ---- Page builders ----
 static void buildOscSliders() {
@@ -81,24 +90,33 @@ static void buildOscSliders() {
 static void buildVcfSliders() {
     PatchData& p = synth.patch();
     int x = 10;
-    pageSliders[0] = { "HPF", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.hpfCutoff, 20.0f, 1000.0f, true, ParamId::HpfCutoff }; x += SLIDER_W + 8;
-    pageSliders[1] = { "CUT", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.cutoff,    40.0f, 8000.0f, true, ParamId::Cutoff };    x += SLIDER_W + 8;
-    pageSliders[2] = { "RES", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.resonance, 0.7f,  5.0f,    false, ParamId::Resonance }; x += SLIDER_W + 8;
-    pageSliders[3] = { "ENV", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f,    false, ParamId::EnvAmount };
-    pageSliderCount = 4;
+    pageSliders[0] = { "HPF",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.hpfCutoff, 20.0f, 1000.0f, true, ParamId::HpfCutoff }; x += SLIDER_W + 8;
+    pageSliders[1] = { "CUT",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.cutoff,    40.0f, 8000.0f, true, ParamId::Cutoff };    x += SLIDER_W + 8;
+    pageSliders[2] = { "RES",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.resonance, 0.7f,  5.0f,    false, ParamId::Resonance }; x += SLIDER_W + 8;
+    pageSliders[3] = { "ENV",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f,    false, ParamId::EnvAmount }; x += SLIDER_W + 8;
+    pageSliders[4] = { "DRIVE", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.drive,     1.0f,  8.0f,    false, ParamId::Drive };
+    pageSliderCount = 5;
 }
 static void buildEnvSliders() {
     PatchData& p = synth.patch();
-    int x = 10;
-    pageSliders[0] = { "A-A",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampA, 0.0f, 3000.0f, true, ParamId::AmpA }; x += SLIDER_W + 4;
-    pageSliders[1] = { "A-D",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampD, 0.0f, 3000.0f, true, ParamId::AmpD }; x += SLIDER_W + 4;
-    pageSliders[2] = { "A-S",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampS, 0.0f, 1.0f,    false, ParamId::AmpS }; x += SLIDER_W + 4;
-    pageSliders[3] = { "A-R",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampR, 0.0f, 5000.0f, true, ParamId::AmpR }; x += SLIDER_W + 12;
-    pageSliders[4] = { "F-A",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltA, 0.0f, 3000.0f, true, ParamId::FltA }; x += SLIDER_W + 4;
-    pageSliders[5] = { "F-D",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltD, 0.0f, 3000.0f, true, ParamId::FltD }; x += SLIDER_W + 4;
-    pageSliders[6] = { "F-S",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltS, 0.0f, 1.0f,    false, ParamId::FltS }; x += SLIDER_W + 4;
-    pageSliders[7] = { "F-R",  x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltR, 0.0f, 5000.0f, true, ParamId::FltR }; x += SLIDER_W + 12;
-    pageSliders[8] = { "V-AMT",x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.velAmount, 0.0f, 1.0f, false, ParamId::VelAmount };
+
+    const int sw      = 26;   // a hair narrower
+    const int gapIn   = 3;    // within a group (4 sliders)
+    const int gapOut  = 10;   // between groups
+
+    int x = 6;
+    pageSliders[0] = { "A", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampA, 0.0f, 3000.0f, true,  ParamId::AmpA }; x += sw + gapIn;
+    pageSliders[1] = { "D", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampD, 0.0f, 3000.0f, true,  ParamId::AmpD }; x += sw + gapIn;
+    pageSliders[2] = { "S", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampS, 0.0f, 1.0f,    false, ParamId::AmpS }; x += sw + gapIn;
+    pageSliders[3] = { "R", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampR, 0.0f, 5000.0f, true,  ParamId::AmpR }; x += sw + gapOut;
+
+    pageSliders[4] = { "A", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltA, 0.0f, 3000.0f, true,  ParamId::FltA }; x += sw + gapIn;
+    pageSliders[5] = { "D", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltD, 0.0f, 3000.0f, true,  ParamId::FltD }; x += sw + gapIn;
+    pageSliders[6] = { "S", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltS, 0.0f, 1.0f,    false, ParamId::FltS }; x += sw + gapIn;
+    pageSliders[7] = { "R", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltR, 0.0f, 5000.0f, true,  ParamId::FltR }; x += sw + gapOut;
+
+    pageSliders[8] = { "AMT", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.velAmount, 0.0f, 1.0f, false, ParamId::VelAmount };
+
     pageSliderCount = 9;
 }
 static void buildChorusSliders() {
@@ -254,7 +272,7 @@ void UI::drawCalButton(bool pressed) {
 
 void UI::drawHeaderCpu() {
     // Clear CPU text area so old digits don't ghost.
-    tft.fillRect(hdrCpuX, 0, hdrCpuW, HEADER_H, ILI9341_NAVY);
+    tft.fillRect(hdrCpuX, 0, hdrCpuW, HEADER_H, HEADER_BG);
 
     float pct = synth.cpuUsagePercent();
     if (pct < 0)  pct = 0;
@@ -271,7 +289,7 @@ void UI::drawHeaderCpu() {
 
 void UI::drawMidiActivity() {
     // Clear the block
-    tft.fillRect(midiActX, 0, 32, HEADER_H, ILI9341_NAVY);
+    tft.fillRect(midiActX, 0, 32, HEADER_H, HEADER_BG);
 
     struct SrcInfo {
         MidiSource src;
@@ -398,7 +416,7 @@ void UI::drawHeaderVoiceDots() {
 }
 
 void UI::drawHeader() {
-    tft.fillRect(0, 0, SCREEN_W, HEADER_H, ILI9341_NAVY);
+    tft.fillRect(0, 0, SCREEN_W, HEADER_H, HEADER_BG);
 
     drawHeaderCpu();
     drawHeaderVoiceDots();
@@ -418,23 +436,44 @@ void UI::drawHeader() {
 
     drawCalButton(false);
     drawHeaderMeter();
+    drawMidiActivity();   // <-- ADD
+
 }
 
 void UI::drawTabs() {
     tft.fillRect(0, TABS_Y, SCREEN_W, TABS_H, ILI9341_BLACK);
     int tabW = SCREEN_W / PAGE_COUNT;
+
     for (int i = 0; i < PAGE_COUNT; i++) {
         int x = i * tabW;
         bool active = (i == currentPage);
-        uint16_t bg = active ? ILI9341_ORANGE : ILI9341_DARKGREY;
-        tft.fillRect(x+1, TABS_Y+1, tabW-2, TABS_H-2, bg);
-        tft.drawRect(x,   TABS_Y,   tabW,   TABS_H,   ILI9341_WHITE);
-        tft.setTextColor(ILI9341_WHITE);
+
+        uint16_t bg = active ? TAB_ACTIVE_BG   : TAB_INACTIVE_BG;
+        uint16_t fg = active ? TAB_ACTIVE_FG   : TAB_INACTIVE_FG;
+
+        // Fill the tab
+        tft.fillRect(x + 1, TABS_Y, tabW - 2, TABS_H - 1, bg);
+
+        // Soft separator between tabs
+        if (i > 0) {
+            tft.drawFastVLine(x, TABS_Y + 2, TABS_H - 4, TAB_SEP_COLOR);
+        }
+
+        // Active tab accent bar along the bottom
+        if (active) {
+            tft.fillRect(x + 1, TABS_Y + TABS_H - 2, tabW - 2, 2, TAB_ACTIVE_EDGE);
+        }
+
+        // Label
+        tft.setTextColor(fg);
         tft.setTextSize(1);
         int tw = strlen(pageNames[i]) * 6;
-        tft.setCursor(x + (tabW - tw)/2, TABS_Y + (TABS_H - 8)/2);
+        tft.setCursor(x + (tabW - tw) / 2, TABS_Y + (TABS_H - 8) / 2 - 1);
         tft.print(pageNames[i]);
     }
+
+    // Thin line under the whole tab bar — softens the transition to the body
+    tft.drawFastHLine(0, TABS_Y + TABS_H - 1, SCREEN_W, TAB_SEP_COLOR);
 }
 
 int UI::tabHitTest(int x, int y) const {
@@ -465,9 +504,14 @@ void UI::drawEnvPage() {
 
     tft.setTextColor(ILI9341_CYAN);
     tft.setTextSize(1);
-    tft.setCursor(10,  ENV_LABEL_Y); tft.print("AMP ENV");
-    tft.setCursor(178, ENV_LABEL_Y); tft.print("FILTER ENV");
-    tft.setCursor(290, ENV_LABEL_Y); tft.print("VEL");
+
+    // Section labels centered over each group
+    // AMP ENV:  sliders at x=6..119, center ≈ 62, text 7*6=42 → start ≈ 41
+    tft.setCursor( 41, ENV_LABEL_Y); tft.print("AMP ENV");
+    // FILTER ENV: sliders at x=129..242, center ≈ 185, text 10*6=60 → start ≈ 155
+    tft.setCursor(155, ENV_LABEL_Y); tft.print("FILTER ENV");
+    // VEL: slider at x=252..278, center ≈ 265, text 3*6=18 → start ≈ 256
+    tft.setCursor(256, ENV_LABEL_Y); tft.print("VEL");
 
     for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
 
@@ -545,6 +589,28 @@ void UI::drawPerfPage() {
     tft.setCursor(94, row3y + 4);
     tft.printf("%d", arp.getOctaves());
     drawIncBtn(160, row3y, 22, 20, "+");
+
+// Separator gap + MIDI section
+    int sepY  = row3y + 28;               // was the old row4y
+    int row4y = sepY + 14;                // push the row down by 14 px
+
+    // Section divider line + label
+    tft.drawFastHLine(10, sepY + 2, SCREEN_W - 20, 0x2D7F);  // subtle accent line
+    tft.setTextColor(ILI9341_CYAN);
+    tft.setTextSize(1);
+    tft.setCursor(10, sepY + 6);
+    tft.print("MIDI");
+
+    // MIDI channel row
+    tft.setTextSize(1);
+    tft.setTextColor(ILI9341_WHITE);
+    tft.setCursor(10, row4y + 4); tft.print("CH");
+    drawIncBtn(64, row4y, 22, 20, "-");
+    tft.setCursor(94, row4y + 4);
+    uint8_t ch = synth.patch().midiChannel;
+    if (ch == 0) tft.print("ALL");
+    else         tft.printf("%d", ch);
+    drawIncBtn(160, row4y, 22, 20, "+");
 }
 
 // ---- Patch page ----
@@ -817,6 +883,22 @@ void UI::handleTouch(int x, int y) {
             if (x >= 64 && x <= 86)   { arp.setOctaves(arp.getOctaves() - 1); drawPerfPage(); return; }
             if (x >= 160 && x <= 182) { arp.setOctaves(arp.getOctaves() + 1); drawPerfPage(); return; }
         }
+    int sepY  = row3y + 28;
+    int row4y = sepY + 14;
+    if (y >= row4y && y <= row4y + 20) {
+        uint8_t& c = synth.patch().midiChannel;
+        if (x >= 64 && x <= 86) {
+            if (c == 0) c = 16;
+            else c--;
+            drawPerfPage();
+            return;
+        }
+        if (x >= 160 && x <= 182) {
+            c = (c + 1) % 17;
+            drawPerfPage();
+            return;
+        }
+    }
     } else if (currentPage == PAGE_PATCH) {
         int slot = patchSlotHitTest(x, y);
         if (slot >= 0) { onPatchSlotTap(slot); return; }

@@ -2,7 +2,7 @@
 #include <Arduino.h>
 
 // ---------- Polyphony ----------
-#define MAX_VOICES        6
+#define MAX_VOICES        8
 #define MAX_VOICES_LIMIT  16
 
 // ---------- Display (ILI9341) ----------

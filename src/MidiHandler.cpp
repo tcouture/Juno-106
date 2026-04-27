@@ -10,14 +10,25 @@ MidiHandler midiHandler;
 static constexpr float PITCH_BEND_RANGE_SEMI = 2.0f;
 
 // ---- Core handlers (source-agnostic) ----
-static void handleNoteOnCore(byte, byte note, byte vel) {
+static void handleNoteOnCore(byte ch, byte note, byte vel) {
+    if (!synth.matchesChannel(ch)) return;
     if (vel == 0) { arp.noteOff(note); return; }
     arp.noteOn(note, vel);
 }
-static void handleNoteOffCore(byte, byte note, byte) {
+static void handleNoteOffCore(byte ch, byte note, byte) {
+    if (!synth.matchesChannel(ch)) return;
     arp.noteOff(note);
 }
-static void handleCCCore(byte, byte cc, byte val) {
+static void handlePitchBendCore(byte ch, int bend) {
+    if (!synth.matchesChannel(ch)) return;
+    float norm = (float)bend / 8192.0f;
+    if (norm > 1.0f)  norm = 1.0f;
+    if (norm < -1.0f) norm = -1.0f;
+    synth.setPitchBend(norm * PITCH_BEND_RANGE_SEMI);
+}
+static void handleCCCore(byte ch, byte cc, byte val) {
+    if (!synth.matchesChannel(ch)) return;
+
     PatchData& p = synth.patch();
     float vf = val / 127.0f;
 
@@ -26,6 +37,7 @@ static void handleCCCore(byte, byte cc, byte val) {
         case 20:  synth.setParam(ParamId::SawLevel,   vf); return;
         case 21:  synth.setParam(ParamId::PulseLevel, vf); return;
         case 22:  synth.setParam(ParamId::SubLevel,   vf); return;
+        case 64:  synth.setSustain(val >= 64); return;
         case 70:  synth.setParam(ParamId::PulseWidth, 0.05f + vf * 0.9f); return;
         case 74:  synth.setParam(ParamId::Cutoff,    40.0f + vf * 7960.0f); return;
         case 71:  synth.setParam(ParamId::Resonance, 0.7f  + vf * 4.3f);    return;
@@ -52,12 +64,6 @@ static void handleCCCore(byte, byte cc, byte val) {
             return;
         default: return;
     }
-}
-static void handlePitchBendCore(byte, int bend) {
-    float norm = (float)bend / 8192.0f;
-    if (norm > 1.0f)  norm = 1.0f;
-    if (norm < -1.0f) norm = -1.0f;
-    synth.setPitchBend(norm * PITCH_BEND_RANGE_SEMI);
 }
 
 // ---- DIN wrappers (ping DIN activity) ----

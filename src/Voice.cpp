@@ -18,10 +18,10 @@ void Voice::init(AudioSynthWaveform* sawOsc,
     mix_ = oscMix; filter_ = filter;
     ampEnv_ = ampEnv; filtEnv_ = filtEnv;
 
-    saw_->begin(0.0f, 110.0f, WAVEFORM_SAWTOOTH);
-    pulse_->begin(0.0f, 110.0f, WAVEFORM_PULSE);
+    saw_->begin(0.0f, 110.0f, WAVEFORM_BANDLIMIT_SAWTOOTH);
+    pulse_->begin(0.0f, 110.0f, WAVEFORM_BANDLIMIT_PULSE);
     pulse_->pulseWidth(0.5f);
-    sub_->begin(0.0f, 55.0f, WAVEFORM_SQUARE);
+    sub_->begin(0.0f, 55.0f, WAVEFORM_BANDLIMIT_SQUARE);
 
     mix_->gain(0, 0.5f); mix_->gain(1, 0.5f);
     mix_->gain(2, 0.3f); mix_->gain(3, 0.0f);

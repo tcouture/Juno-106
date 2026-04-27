@@ -24,7 +24,8 @@ enum class ParamId : uint8_t {
     FltA, FltD, FltS, FltR,
     LfoRate, LfoDepth,
     ChorusRate, ChorusDepth,
-    VelAmount, GlideMs
+    VelAmount, GlideMs,
+    Drive           // <-- ADD THIS
 };
 
 struct PatchData {
@@ -57,12 +58,18 @@ struct PatchData {
     float   chorusRate  = 0.513f;
     float   chorusDepth = 22.0f;
 
+    // Drive
+    float drive = 1.0f;   // 1 = clean; up to 8 for heavy saturation
+
     // Velocity
     uint8_t velDest   = VEL_DEST_VCA;
     float   velAmount = 0.8f;
 
     // Glide / portamento (ms)
     float   glideMs   = 0.0f;
+
+    // MIDI routing
+    uint8_t midiChannel = 0;        // 0 = OMNI, 1..16 = specific channel
 };
 
 class SynthEngine {
@@ -119,6 +126,10 @@ public:
     float peakLevelL();   // returns 0..1, consumes the peak
     float peakLevelR();
 
+    void setSustain(bool on);
+    bool sustain() const { return sustainOn; }
+    bool matchesChannel(uint8_t incomingChannel) const;
+
 private:
     int  findFreeVoice(uint8_t note);
     void applyChorus();
@@ -144,6 +155,9 @@ private:
     // Performance mod
     float pitchBendSemi = 0.0f;
     float modWheelAmt   = 0.0f;
+
+    bool    sustainOn = false;
+    uint8_t sustainedNotes[128] = {0};   // bitmap of notes held by sustain
 };
 
 extern SynthEngine synth;

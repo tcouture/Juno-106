@@ -1,5 +1,6 @@
 #include "SynthEngine.h"
 #include "AudioEffectJunoChorus.h"
+#include "AudioEffectSoftClip.h"
 #include <vector>
 #include <math.h>
 
@@ -18,6 +19,9 @@ AudioFilterStateVariable hpf;
 
 AudioEffectJunoChorus junoChorus;
 
+AudioEffectSoftClip driveL;
+AudioEffectSoftClip driveR;
+
 AudioMixer4 mixL, mixR;
 AudioOutputI2S i2sOut;
 AudioControlSGTL5000 codec;
@@ -33,6 +37,29 @@ static void controlIsr();
 SynthEngine synth;
 
 SynthEngine::SynthEngine() {}
+
+bool SynthEngine::matchesChannel(uint8_t ch) const {
+    if (currentPatch.midiChannel == 0) return true;         // OMNI
+    return ch == currentPatch.midiChannel;
+}
+
+void SynthEngine::setSustain(bool on) {
+    sustainOn = on;
+    if (!on) {
+        // Release any notes that were held only by sustain
+        for (int n = 0; n < 128; n++) {
+            if (sustainedNotes[n]) {
+                sustainedNotes[n] = 0;
+                // Actually release it now
+                for (int i = 0; i < MAX_VOICES; i++) {
+                    if (voices[i].isActive() && voices[i].getNote() == n) {
+                        voices[i].noteOff();
+                    }
+                }
+            }
+        }
+    }
+}
 
 float SynthEngine::cpuUsagePercent() {
     return AudioProcessorUsage();
@@ -77,11 +104,13 @@ void SynthEngine::begin() {
     cables.push_back(new AudioConnection(hpf,        2, mixR, 0));
     cables.push_back(new AudioConnection(junoChorus, 1, mixR, 1));
 
-    cables.push_back(new AudioConnection(mixL, 0, i2sOut, 0));
-    cables.push_back(new AudioConnection(mixR, 0, i2sOut, 1));
+    cables.push_back(new AudioConnection(mixL, 0, driveL, 0));
+    cables.push_back(new AudioConnection(mixR, 0, driveR, 0));
+    cables.push_back(new AudioConnection(driveL, 0, i2sOut, 0));
+    cables.push_back(new AudioConnection(driveR, 0, i2sOut, 1));
 
-    cables.push_back(new AudioConnection(mixL, 0, peakL, 0));
-    cables.push_back(new AudioConnection(mixR, 0, peakR, 0));
+    cables.push_back(new AudioConnection(driveL, 0, peakL, 0));
+    cables.push_back(new AudioConnection(driveR, 0, peakR, 0));
 
     for (int i = 0; i < 4; i++) {
         subMix1.gain(i, 0.25f); subMix2.gain(i, 0.25f);
@@ -113,6 +142,9 @@ int SynthEngine::findFreeVoice(uint8_t note) {
 }
 
 void SynthEngine::noteOn(uint8_t note, uint8_t velocity) {
+
+    sustainedNotes[note] = 0;
+
     if (velocity == 0) { noteOff(note); return; }
     int idx = findFreeVoice(note);
     Voice& v = voices[idx];
@@ -141,12 +173,19 @@ void SynthEngine::noteOn(uint8_t note, uint8_t velocity) {
 }
 
 void SynthEngine::noteOff(uint8_t note) {
+    if (sustainOn) {
+        sustainedNotes[note] = 1;   // mark as "waiting on pedal"
+        return;
+    }
     for (int i = 0; i < MAX_VOICES; i++)
         if (voices[i].isActive() && voices[i].getNote() == note)
             voices[i].noteOff();
 }
+
 void SynthEngine::allNotesOff() {
     for (int i = 0; i < MAX_VOICES; i++) voices[i].noteOff();
+    memset(sustainedNotes, 0, sizeof(sustainedNotes));
+    // sustainOn stays as-is; pedal controls it
 }
 
 void SynthEngine::applyChorus() {
@@ -175,6 +214,8 @@ void SynthEngine::applyPatch(const PatchData& p) {
         voices[i].setGlideMs(p.glideMs);
     }
     hpf.frequency(p.hpfCutoff);
+    driveL.setDrive(p.drive);
+    driveR.setDrive(p.drive);
     applyChorus();
 }
 
@@ -203,6 +244,12 @@ void SynthEngine::setParam(ParamId id, float v) {
         case ParamId::ChorusDepth: p.chorusDepth = v; junoChorus.setDepth(v); break;
         case ParamId::VelAmount:   p.velAmount = v; break;
         case ParamId::GlideMs:     p.glideMs = v; for(auto& vo:voices) vo.setGlideMs(v); break;
+        case ParamId::Drive:
+            p.drive = v;
+            driveL.setDrive(v);
+            driveR.setDrive(v);
+            break;
+        
     }
 }
 
