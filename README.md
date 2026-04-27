@@ -6,7 +6,7 @@ patch storage on SD card, full MIDI (USB-device + USB-host + DIN), a custom
 stereo BBD-style chorus, master soft-clip drive, an arpeggiator, and a rich
 performance feature set.
 
-![Juno-106 Emulator](docs/images/teensy.jpg)
+<img src="docs/images/teensy.jpg" alt="drawing" width="240"/>
 
 ---
 
