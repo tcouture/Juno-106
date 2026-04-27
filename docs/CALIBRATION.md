@@ -1,4 +1,3 @@
-cat > docs/CALIBRATION.md << 'DOCEOF'
 # Touch Calibration
 
 ## Why calibration matters
