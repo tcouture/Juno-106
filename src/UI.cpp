@@ -5,9 +5,10 @@
 #include "TouchCalibration.h"
 #include "Arpeggiator.h"
 #include "OnScreenKeyboard.h"
+#include "MidiActivity.h"
+#include "UITheme.h"
 #include <ILI9341_t3.h>
 #include <XPT2046_Touchscreen.h>
-#include "MidiActivity.h"
 
 static ILI9341_t3 tft(TFT_CS, TFT_DC, TFT_RST);
 static XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
@@ -22,114 +23,189 @@ struct Slider {
     float  min, max;
     bool   logarithmic;
     ParamId paramId;
+    const char* unit;   // e.g. "Hz", "ms", "%"; nullptr for none
 };
 
 static Slider pageSliders[12];
 static int    pageSliderCount = 0;
 
-// Layout constants
-static constexpr int HEADER_H  = 26;
+// ---- Layout (using theme heights) ----
+static constexpr int HEADER_H  = TH_HEADER_H;
 static constexpr int TABS_Y    = HEADER_H;
-static constexpr int TABS_H    = 20;
+static constexpr int TABS_H    = TH_TABS_H;
 static constexpr int BODY_Y    = HEADER_H + TABS_H;
 static constexpr int BODY_H    = SCREEN_H - BODY_Y;
-static constexpr int SLIDER_W  = 30;
-static constexpr int SLIDER_H  = 130;
-static constexpr int SLIDER_Y  = BODY_Y + 8;
+static constexpr int SLIDER_W  = 32;
+static constexpr int SLIDER_H  = 110;
+static constexpr int SLIDER_Y  = BODY_Y + 10;
 
-// ENV page uses its own offsets so section labels + VEL DEST strip don't collide
-static constexpr int ENV_LABEL_Y  = BODY_Y + 2;
-static constexpr int ENV_SLIDER_Y = BODY_Y + 16;
-static constexpr int ENV_SLIDER_H = SLIDER_H - 20;
+// ENV page custom offsets (sliders + bottom strip)
+static constexpr int ENV_LABEL_Y  = BODY_Y + 4;
+static constexpr int ENV_SLIDER_Y = BODY_Y + 18;
+static constexpr int ENV_SLIDER_H = SLIDER_H - 18;
 
-// Shared bottom-row destination strip (used by OSC + ENV pages)
+// Bottom-row destination strip
 static constexpr int DEST_BTN_W   = 44;
-static constexpr int DEST_BTN_H   = 18;
-static constexpr int DEST_BTN_GAP = 3;
-
-// Header colors
-
-static constexpr uint16_t HEADER_BG      =  0x10B5;
-static constexpr uint16_t DOT_HELD_COLOR      = ILI9341_GREEN;
-static constexpr uint16_t DOT_RELEASING_COLOR = ILI9341_YELLOW;
-static constexpr uint16_t DOT_OFF_COLOR       = 0x2104;   // very dark grey
-static constexpr uint16_t CPU_TEXT_COLOR      = ILI9341_WHITE;
-static constexpr uint16_t METER_BG_COLOR   = 0x2104;
-static constexpr uint16_t METER_BAR_COLOR  = ILI9341_GREEN;
-static constexpr uint16_t METER_LOUD_COLOR = ILI9341_YELLOW;
-static constexpr uint16_t METER_CLIP_COLOR = ILI9341_RED;
-static constexpr uint16_t METER_HOLD_COLOR = ILI9341_WHITE;
-static constexpr uint16_t MIDI_ACT_USBDEV_COLOR = ILI9341_GREEN;
-static constexpr uint16_t MIDI_ACT_USBHOST_COLOR = ILI9341_CYAN;
-static constexpr uint16_t MIDI_ACT_DIN_COLOR     = ILI9341_MAGENTA;
-static constexpr uint16_t MIDI_ACT_OFF_COLOR     = 0x2104;
-static constexpr uint16_t MIDI_ACT_LABEL_COLOR   = ILI9341_WHITE;
-
-static constexpr uint16_t TAB_ACTIVE_BG   = 0x10B5;   // deep blue
-static constexpr uint16_t TAB_ACTIVE_FG   = ILI9341_WHITE;
-static constexpr uint16_t TAB_ACTIVE_EDGE = ILI9341_ORANGE;
-static constexpr uint16_t TAB_INACTIVE_BG = 0x18E3;   // charcoal
-static constexpr uint16_t TAB_INACTIVE_FG = 0x9CD3;   // muted blue-grey
-static constexpr uint16_t TAB_SEP_COLOR   = 0x2D7F;   // darker accent line
+static constexpr int DEST_BTN_H   = 16;
+static constexpr int DEST_BTN_GAP = 2;
 
 static const char* pageNames[PAGE_COUNT] = { "PATCH", "OSC", "VCF", "ENV", "CHORUS", "PERF" };
 
-// ---- Page builders ----
+// =============================================================================
+// Drawing primitives — Ableton-style
+// =============================================================================
+
+static void drawHRule(int y, uint16_t color = TH_RULE) {
+    tft.drawFastHLine(0, y, SCREEN_W, color);
+}
+
+static void drawOutlinedButton(int x, int y, int w, int h, const char* label,
+                               bool active = false, bool warn = false) {
+    uint16_t edge = active ? TH_ACCENT : (warn ? TH_BTN_WARN : TH_TEXT_DIM);
+    uint16_t txt  = active ? TH_TEXT_HI : (warn ? TH_TEXT_HI : TH_TEXT_NORM);
+
+    // Optional subtle inner fill when active
+    if (active) {
+        tft.fillRect(x + 1, y + 1, w - 2, h - 2, TH_BG_PANEL_HI);
+    } else {
+        tft.fillRect(x + 1, y + 1, w - 2, h - 2, TH_BG_DEEPEST);
+    }
+    tft.drawRect(x, y, w, h, edge);
+
+    tft.setTextColor(txt);
+    tft.setTextSize(1);
+    int tw = strlen(label) * 6;
+    tft.setCursor(x + (w - tw) / 2, y + (h - 8) / 2);
+    tft.print(label);
+}
+
+// Format a slider value for display (handles common ranges)
+static void formatValue(char* out, size_t n, float v, const Slider& s) {
+    if (s.unit && strcmp(s.unit, "Hz") == 0) {
+        if (v < 10.0f) snprintf(out, n, "%.2fHz", v);
+        else           snprintf(out, n, "%.0fHz", v);
+    } else if (s.unit && strcmp(s.unit, "ms") == 0) {
+        if (v < 10.0f) snprintf(out, n, "%.1fms", v);
+        else           snprintf(out, n, "%.0fms", v);
+    } else if (s.unit && strcmp(s.unit, "%") == 0) {
+        snprintf(out, n, "%.0f%%", v * 100.0f);
+    } else if (s.unit && strcmp(s.unit, "smp") == 0) {
+        snprintf(out, n, "%.0f", v);
+    } else {
+        // Default: 2 decimals if small range, integer if large
+        if (s.max <= 2.0f)        snprintf(out, n, "%.2f", v);
+        else if (s.max <= 10.0f)  snprintf(out, n, "%.1f", v);
+        else                      snprintf(out, n, "%.0f", v);
+    }
+}
+
+static void drawSlimSlider(const Slider& s) {
+    // Clear column area (track + label zone + value zone)
+    tft.fillRect(s.x, s.y, s.w, s.h + 22, TH_BG_DEEPEST);
+
+    int trackX = s.x + s.w / 2;
+    int trackY = s.y;
+    int trackH = s.h;
+
+    // Vertical track line (thin)
+    tft.drawFastVLine(trackX, trackY, trackH, TH_BG_PANEL_HI);
+
+    // Compute handle position
+    float v = *s.value;
+    float norm;
+    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
+        norm = logf(v / s.min) / logf(s.max / s.min);
+    } else {
+        norm = (v - s.min) / (s.max - s.min);
+    }
+    if (norm < 0) norm = 0;
+    if (norm > 1) norm = 1;
+
+    int handleY = trackY + trackH - 1 - (int)((trackH - 1) * norm);
+
+    // Active range below the handle (brighter)
+    if (handleY < trackY + trackH - 1) {
+        tft.drawFastVLine(trackX, handleY, trackY + trackH - handleY, TH_TEXT_NORM);
+    }
+
+    // Handle bar (5 px wide, 3 px tall)
+    tft.fillRect(trackX - 6, handleY - 1, 13, 3, TH_ACCENT);
+
+    // Label below
+    tft.setTextSize(1);
+    tft.setTextColor(TH_TEXT_DIM);
+    int tw = strlen(s.label) * 6;
+    tft.setCursor(s.x + (s.w - tw) / 2, s.y + s.h + 3);
+    tft.print(s.label);
+
+    // Numeric value below label
+    char vbuf[12];
+    formatValue(vbuf, sizeof(vbuf), v, s);
+    tft.setTextColor(TH_TEXT_NORM);
+    int vw = strlen(vbuf) * 6;
+    tft.setCursor(s.x + (s.w - vw) / 2, s.y + s.h + 13);
+    tft.print(vbuf);
+}
+
+// =============================================================================
+// Page builders
+// =============================================================================
+
 static void buildOscSliders() {
     PatchData& p = synth.patch();
-    int x = 8;
-    pageSliders[0] = { "SAW",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.sawLevel,   0.0f, 1.0f, false, ParamId::SawLevel };   x += SLIDER_W + 6;
-    pageSliders[1] = { "PUL",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseLevel, 0.0f, 1.0f, false, ParamId::PulseLevel }; x += SLIDER_W + 6;
-    pageSliders[2] = { "SUB",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.subLevel,   0.0f, 1.0f, false, ParamId::SubLevel };   x += SLIDER_W + 6;
-    pageSliders[3] = { "PW",    x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseWidth, 0.05f, 0.95f, false, ParamId::PulseWidth }; x += SLIDER_W + 6;
-    pageSliders[4] = { "LFO-R", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoRate,    0.05f, 20.0f, true, ParamId::LfoRate };   x += SLIDER_W + 6;
-    pageSliders[5] = { "LFO-D", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoDepth,   0.0f, 1.0f, false, ParamId::LfoDepth };   x += SLIDER_W + 6;
-    pageSliders[6] = { "GLIDE", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.glideMs,    0.0f, 1000.0f, false, ParamId::GlideMs };
+    int x = 6;
+    int gap = SLIDER_W + 8;
+    pageSliders[0] = { "SAW",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.sawLevel,   0.0f, 1.0f, false, ParamId::SawLevel,   nullptr }; x += gap;
+    pageSliders[1] = { "PUL",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseLevel, 0.0f, 1.0f, false, ParamId::PulseLevel, nullptr }; x += gap;
+    pageSliders[2] = { "SUB",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.subLevel,   0.0f, 1.0f, false, ParamId::SubLevel,   nullptr }; x += gap;
+    pageSliders[3] = { "PW",    x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.pulseWidth, 0.05f, 0.95f, false, ParamId::PulseWidth, nullptr }; x += gap;
+    pageSliders[4] = { "RATE",  x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoRate,    0.05f, 20.0f, true, ParamId::LfoRate,   "Hz" }; x += gap;
+    pageSliders[5] = { "DEPTH", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.lfoDepth,   0.0f, 1.0f, false, ParamId::LfoDepth,  nullptr }; x += gap;
+    pageSliders[6] = { "GLIDE", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.glideMs,    0.0f, 1000.0f, false, ParamId::GlideMs, "ms" };
     pageSliderCount = 7;
 }
+
 static void buildVcfSliders() {
     PatchData& p = synth.patch();
-    int x = 10;
-    pageSliders[0] = { "HPF",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.hpfCutoff, 20.0f, 1000.0f, true, ParamId::HpfCutoff }; x += SLIDER_W + 8;
-    pageSliders[1] = { "CUT",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.cutoff,    40.0f, 8000.0f, true, ParamId::Cutoff };    x += SLIDER_W + 8;
-    pageSliders[2] = { "RES",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.resonance, 0.7f,  5.0f,    false, ParamId::Resonance }; x += SLIDER_W + 8;
-    pageSliders[3] = { "ENV",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f,    false, ParamId::EnvAmount }; x += SLIDER_W + 8;
-    pageSliders[4] = { "DRIVE", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.drive,     1.0f,  8.0f,    false, ParamId::Drive };
+    int x = 14;
+    int gap = SLIDER_W + 18;
+    pageSliders[0] = { "HPF",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.hpfCutoff, 20.0f, 1000.0f, true, ParamId::HpfCutoff, "Hz" }; x += gap;
+    pageSliders[1] = { "CUT",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.cutoff,    40.0f, 8000.0f, true, ParamId::Cutoff,    "Hz" }; x += gap;
+    pageSliders[2] = { "RES",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.resonance, 0.7f,  5.0f,    false, ParamId::Resonance, nullptr }; x += gap;
+    pageSliders[3] = { "ENV",   x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.envAmount, 0.0f,  1.0f,    false, ParamId::EnvAmount, nullptr }; x += gap;
+    pageSliders[4] = { "DRIVE", x, SLIDER_Y, SLIDER_W, SLIDER_H, &p.drive,     1.0f,  8.0f,    false, ParamId::Drive,     nullptr };
     pageSliderCount = 5;
 }
+
 static void buildEnvSliders() {
     PatchData& p = synth.patch();
-
-    const int sw      = 26;   // a hair narrower
-    const int gapIn   = 3;    // within a group (4 sliders)
-    const int gapOut  = 10;   // between groups
-
-    int x = 6;
-    pageSliders[0] = { "A", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampA, 0.0f, 3000.0f, true,  ParamId::AmpA }; x += sw + gapIn;
-    pageSliders[1] = { "D", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampD, 0.0f, 3000.0f, true,  ParamId::AmpD }; x += sw + gapIn;
-    pageSliders[2] = { "S", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampS, 0.0f, 1.0f,    false, ParamId::AmpS }; x += sw + gapIn;
-    pageSliders[3] = { "R", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.ampR, 0.0f, 5000.0f, true,  ParamId::AmpR }; x += sw + gapOut;
-
-    pageSliders[4] = { "A", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltA, 0.0f, 3000.0f, true,  ParamId::FltA }; x += sw + gapIn;
-    pageSliders[5] = { "D", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltD, 0.0f, 3000.0f, true,  ParamId::FltD }; x += sw + gapIn;
-    pageSliders[6] = { "S", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltS, 0.0f, 1.0f,    false, ParamId::FltS }; x += sw + gapIn;
-    pageSliders[7] = { "R", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.fltR, 0.0f, 5000.0f, true,  ParamId::FltR }; x += sw + gapOut;
-
-    pageSliders[8] = { "AMT", x, ENV_SLIDER_Y, sw, ENV_SLIDER_H, &p.velAmount, 0.0f, 1.0f, false, ParamId::VelAmount };
-
+    int x = 8;
+    int gapIn  = 4;
+    int gapOut = 14;
+    pageSliders[0] = { "A", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampA, 0.0f, 3000.0f, true,  ParamId::AmpA, "ms" }; x += SLIDER_W + gapIn;
+    pageSliders[1] = { "D", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampD, 0.0f, 3000.0f, true,  ParamId::AmpD, "ms" }; x += SLIDER_W + gapIn;
+    pageSliders[2] = { "S", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampS, 0.0f, 1.0f,    false, ParamId::AmpS, nullptr }; x += SLIDER_W + gapIn;
+    pageSliders[3] = { "R", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampR, 0.0f, 5000.0f, true,  ParamId::AmpR, "ms" }; x += SLIDER_W + gapOut;
+    pageSliders[4] = { "A", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltA, 0.0f, 3000.0f, true,  ParamId::FltA, "ms" }; x += SLIDER_W + gapIn;
+    pageSliders[5] = { "D", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltD, 0.0f, 3000.0f, true,  ParamId::FltD, "ms" }; x += SLIDER_W + gapIn;
+    pageSliders[6] = { "S", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltS, 0.0f, 1.0f,    false, ParamId::FltS, nullptr }; x += SLIDER_W + gapIn;
+    pageSliders[7] = { "R", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltR, 0.0f, 5000.0f, true,  ParamId::FltR, "ms" }; x += SLIDER_W + gapOut;
+    pageSliders[8] = { "AMT", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.velAmount, 0.0f, 1.0f, false, ParamId::VelAmount, nullptr };
     pageSliderCount = 9;
 }
+
 static void buildChorusSliders() {
     PatchData& p = synth.patch();
-    int x = 20;
-    int y = BODY_Y + 55;
-    pageSliders[0] = { "RATE",  x, y, SLIDER_W, SLIDER_H - 20, &p.chorusRate,  0.05f, 8.0f, true, ParamId::ChorusRate };  x += SLIDER_W + 12;
-    pageSliders[1] = { "DEPTH", x, y, SLIDER_W, SLIDER_H - 20, &p.chorusDepth, 0.0f, 80.0f, false, ParamId::ChorusDepth };
+    int x = 30;
+    int y = BODY_Y + 60;
+    int h = SLIDER_H - 20;
+    pageSliders[0] = { "RATE",  x, y, SLIDER_W, h, &p.chorusRate,  0.05f, 8.0f, true, ParamId::ChorusRate,  "Hz" };  x += SLIDER_W + 18;
+    pageSliders[1] = { "DEPTH", x, y, SLIDER_W, h, &p.chorusDepth, 0.0f, 80.0f, false, ParamId::ChorusDepth, "smp" };
     pageSliderCount = 2;
 }
-static void buildPerfSliders() {
-    pageSliderCount = 0;
-}
+
+static void buildPerfSliders() { pageSliderCount = 0; }
+
 static void buildPageSliders(UIPage page) {
     switch (page) {
         case PAGE_OSC:    buildOscSliders(); break;
@@ -141,65 +217,68 @@ static void buildPageSliders(UIPage page) {
     }
 }
 
-static void drawSliderAt(const Slider& s) {
-    tft.drawRect(s.x, s.y, s.w, s.h, ILI9341_DARKGREY);
-    tft.fillRect(s.x+1, s.y+1, s.w-2, s.h-2, ILI9341_BLACK);
-    float v = *s.value;
-    float norm;
-    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
-        norm = logf(v / s.min) / logf(s.max / s.min);
-    } else {
-        norm = (v - s.min) / (s.max - s.min);
-    }
-    if (norm < 0) norm = 0;
-    if (norm > 1) norm = 1;
-    int fillH = (int)((s.h - 2) * norm);
-    tft.fillRect(s.x+1, s.y + s.h - 1 - fillH, s.w-2, fillH, ILI9341_ORANGE);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setTextSize(1);
-    tft.setCursor(s.x + 1, s.y + s.h + 3);
-    tft.print(s.label);
+// =============================================================================
+// Bottom dest strip (LFO DEST / VEL DEST) — Ableton style: text-only with accent underline
+// =============================================================================
+
+static void destStripLayout(int& bx, int& by, int count) {
+    bx = SCREEN_W - count * DEST_BTN_W - (count - 1) * DEST_BTN_GAP - 6;
+    by = SCREEN_H - DEST_BTN_H - 4;
 }
 
-// ---- Shared dest-strip (OSC + ENV) ----
-static void destStripLayout(int& bx, int& by, int count) {
-    bx = SCREEN_W - count*DEST_BTN_W - (count-1)*DEST_BTN_GAP - 6;
-    by = SCREEN_H - DEST_BTN_H - 3;
-}
 static void drawDestStrip(const char* const* labels, int count, int current, const char* title) {
     int bx, by;
     destStripLayout(bx, by, count);
+
+    // Title above
     tft.setTextSize(1);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setCursor(bx, by - 10);
+    tft.setTextColor(TH_TEXT_DIM);
+    tft.setCursor(bx, by - 11);
     tft.print(title);
+
     for (int i = 0; i < count; i++) {
-        int xx = bx + i*(DEST_BTN_W + DEST_BTN_GAP);
-        uint16_t bg = (current == i) ? ILI9341_ORANGE : ILI9341_DARKGREY;
-        tft.fillRoundRect(xx, by, DEST_BTN_W, DEST_BTN_H, 3, bg);
-        tft.drawRoundRect(xx, by, DEST_BTN_W, DEST_BTN_H, 3, ILI9341_WHITE);
-        tft.setTextColor(ILI9341_WHITE);
+        int xx = bx + i * (DEST_BTN_W + DEST_BTN_GAP);
+        bool active = (current == i);
+
+        // Background fill (subtle, only if active)
+        if (active) {
+            tft.fillRect(xx, by, DEST_BTN_W, DEST_BTN_H, TH_BG_PANEL_HI);
+        } else {
+            tft.fillRect(xx, by, DEST_BTN_W, DEST_BTN_H, TH_BG_DEEPEST);
+        }
+
+        // Label
+        tft.setTextColor(active ? TH_TEXT_HI : TH_TEXT_DIM);
         int tw = strlen(labels[i]) * 6;
-        tft.setCursor(xx + (DEST_BTN_W - tw)/2, by + (DEST_BTN_H - 8)/2);
+        tft.setCursor(xx + (DEST_BTN_W - tw) / 2, by + (DEST_BTN_H - 8) / 2);
         tft.print(labels[i]);
+
+        // Accent underline if active
+        if (active) {
+            tft.fillRect(xx, by + DEST_BTN_H, DEST_BTN_W, 1, TH_ACCENT);
+        }
     }
 }
+
 static int destStripHit(int x, int y, int count) {
     int bx, by;
     destStripLayout(bx, by, count);
     if (y < by || y > by + DEST_BTN_H) return -1;
     for (int i = 0; i < count; i++) {
-        int xx = bx + i*(DEST_BTN_W + DEST_BTN_GAP);
+        int xx = bx + i * (DEST_BTN_W + DEST_BTN_GAP);
         if (x >= xx && x <= xx + DEST_BTN_W) return i;
     }
     return -1;
 }
 
-// ---- UI init ----
+// =============================================================================
+// UI init
+// =============================================================================
+
 void UI::begin() {
     tft.begin();
     tft.setRotation(DISPLAY_ROTATION);
-    tft.fillScreen(ILI9341_BLACK);
+    tft.fillScreen(TH_BG_DEEPEST);
 
     ts.begin();
     ts.setRotation(0);
@@ -210,9 +289,9 @@ void UI::begin() {
     if (!needCal && RECAL_ON_BOOT_TOUCH && ts.touched()) needCal = true;
     if (needCal) touchCal.runWizard();
 
-    calBtnW = 36; calBtnH = 16;
+    calBtnW = 32; calBtnH = 14;
     calBtnX = SCREEN_W - calBtnW - 4;
-    calBtnY = 3;
+    calBtnY = (HEADER_H - calBtnH) / 2;
 
     computeHeaderLayout();
 
@@ -221,179 +300,68 @@ void UI::begin() {
     drawAll();
 }
 
-// ---- Header: CPU % + voice dots + patch name + CAL button ----
+// =============================================================================
+// Header
+// =============================================================================
 
 void UI::computeHeaderLayout() {
     const int N = synth.voiceCount();
 
     hdrDotsPerRow = (uint8_t)((N + 1) / 2);
     hdrDotRadius = (hdrDotsPerRow <= 8) ? 2 : 1;
-    hdrDotPitch  = (hdrDotRadius == 2) ? 6 : 4;
+    hdrDotPitch  = (hdrDotRadius == 2) ? 5 : 3;
 
-    const int cpuTextW  = 7 * 6;
-    const int leftMargin = 4;
+    // CPU text "99%" = 3 chars × 6 = 18 px
+    const int cpuTextW   = 4 * 6;
+    const int leftMargin = 6;
 
     hdrCpuX = leftMargin;
     hdrCpuY = (HEADER_H - 8) / 2;
     hdrCpuW = cpuTextW;
 
-    hdrDotsX = hdrCpuX + hdrCpuW + 6;
+    hdrDotsX = hdrCpuX + hdrCpuW + 8;
 
     int rowsHeight = (hdrDotRadius * 2) * 2 + 2;
     hdrDotsY = (HEADER_H - rowsHeight) / 2 + hdrDotRadius;
 
     int dotsW = hdrDotsPerRow * hdrDotPitch;
-    hdrNameX = hdrDotsX + dotsW + 8;
+    hdrNameX = hdrDotsX + dotsW + 10;
 
-    // MIDI activity indicator block: 3 dots with 1-char labels above them.
-    // Goes immediately left of the CAL button.
-    // Each column is 10 px wide, 3 columns + 2 gaps = 30 px + a little padding.
-    const int midiActBlockW = 32;
+    // MIDI activity block: tighter, "U·D·H" inline labels with dim/lit dots
+    const int midiActBlockW = 40;
     midiActX = calBtnX - midiActBlockW - 6;
-    midiActY = 2;   // near top of header
+    midiActY = hdrCpuY;
 
-    // Stereo meter: placed immediately left of the MIDI activity block
-    meterW = 32;
+    // Stereo meter: between name and MIDI activity
+    meterW = 24;
     meterH = HEADER_H - 8;
-    meterX = midiActX - meterW - 6;
+    meterX = midiActX - meterW - 8;
     meterY = (HEADER_H - meterH) / 2;
 }
 
 void UI::drawCalButton(bool pressed) {
-    uint16_t bg = pressed ? ILI9341_ORANGE : ILI9341_DARKGREY;
-    tft.fillRoundRect(calBtnX, calBtnY, calBtnW, calBtnH, 3, bg);
-    tft.drawRoundRect(calBtnX, calBtnY, calBtnW, calBtnH, 3, ILI9341_WHITE);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setTextSize(1);
-    int tw = 3 * 6;
-    tft.setCursor(calBtnX + (calBtnW - tw)/2, calBtnY + (calBtnH - 8)/2);
-    tft.print("CAL");
+    drawOutlinedButton(calBtnX, calBtnY, calBtnW, calBtnH, "CAL", pressed);
 }
 
 void UI::drawHeaderCpu() {
-    // Clear CPU text area so old digits don't ghost.
-    tft.fillRect(hdrCpuX, 0, hdrCpuW, HEADER_H, HEADER_BG);
+    tft.fillRect(hdrCpuX, 0, hdrCpuW, HEADER_H, TH_BG_DARK);
 
     float pct = synth.cpuUsagePercent();
     if (pct < 0)  pct = 0;
     if (pct > 99) pct = 99;
 
-    char buf[12];
-    snprintf(buf, sizeof(buf), "CPU %2d%%", (int)(pct + 0.5f));
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%2d%%", (int)(pct + 0.5f));
 
     tft.setTextSize(1);
-    tft.setTextColor(CPU_TEXT_COLOR);
+    // Color the % readout based on load
+    uint16_t c = TH_TEXT_DIM;
+    if (pct > 70) c = TH_METER_CLIP;
+    else if (pct > 50) c = TH_METER_LOUD;
+    else c = TH_TEXT_NORM;
+    tft.setTextColor(c);
     tft.setCursor(hdrCpuX, hdrCpuY);
     tft.print(buf);
-}
-
-void UI::drawMidiActivity() {
-    // Clear the block
-    tft.fillRect(midiActX, 0, 32, HEADER_H, HEADER_BG);
-
-    struct SrcInfo {
-        MidiSource src;
-        const char* label;
-        uint16_t color;
-    };
-    static const SrcInfo srcs[3] = {
-        { MidiSource::UsbDevice, "U", MIDI_ACT_USBDEV_COLOR  },
-        { MidiSource::Din,       "D", MIDI_ACT_DIN_COLOR     },
-        { MidiSource::UsbHost,   "H", MIDI_ACT_USBHOST_COLOR },
-    };
-
-    const int colW    = 10;
-    const int radius  = 2;
-    const int labelY  = midiActY;
-    const int dotY    = midiActY + 12;    // below the label
-
-    tft.setTextSize(1);
-
-    for (int i = 0; i < 3; i++) {
-        int cx = midiActX + i * colW + colW / 2;
-
-        // Label
-        tft.setTextColor(MIDI_ACT_LABEL_COLOR);
-        tft.setCursor(cx - 3, labelY);    // 3 px = half of 6-px char width
-        tft.print(srcs[i].label);
-
-        // Dot: color fades with recent activity
-        float k = midiActivity.intensity(srcs[i].src);
-        uint16_t c;
-        if (k <= 0.0f) {
-            c = MIDI_ACT_OFF_COLOR;
-        } else {
-            // Blend srcs[i].color toward black as k drops
-            uint8_t r = ((srcs[i].color >> 11) & 0x1F);
-            uint8_t g = ((srcs[i].color >> 5)  & 0x3F);
-            uint8_t b = ( srcs[i].color        & 0x1F);
-            r = (uint8_t)(r * k);
-            g = (uint8_t)(g * k);
-            b = (uint8_t)(b * k);
-            c = (uint16_t)((r << 11) | (g << 5) | b);
-            if (c == 0) c = MIDI_ACT_OFF_COLOR;
-        }
-        tft.fillCircle(cx, dotY, radius, c);
-    }
-}
-
-void UI::drawHeaderMeter() {
-    // Consume peak readings
-    float pL = synth.peakLevelL();
-    float pR = synth.peakLevelR();
-
-    // Smooth the displayed level (fast attack, slow release)
-    const float attack  = 0.6f;
-    const float release = 0.15f;
-
-    meterPeakL += (pL > meterPeakL) ? (pL - meterPeakL) * attack
-                                    : (pL - meterPeakL) * release;
-    meterPeakR += (pR > meterPeakR) ? (pR - meterPeakR) * attack
-                                    : (pR - meterPeakR) * release;
-
-    // Peak-hold: latch the highest value, then decay after 800 ms
-    uint32_t now = millis();
-    if (pL >= meterHoldL) { meterHoldL = pL; meterHoldMsL = now; }
-    else if (now - meterHoldMsL > 800) { meterHoldL *= 0.92f; }
-
-    if (pR >= meterHoldR) { meterHoldR = pR; meterHoldMsR = now; }
-    else if (now - meterHoldMsR > 800) { meterHoldR *= 0.92f; }
-
-    // Two vertical bars side by side
-    int barW = (meterW - 2) / 2;
-    int gapX = 2;
-    int lx = meterX;
-    int rx = meterX + barW + gapX;
-
-    auto drawOne = [&](int bx, float lvl, float hold) {
-        // Background
-        tft.fillRect(bx, meterY, barW, meterH, METER_BG_COLOR);
-        tft.drawRect(bx, meterY, barW, meterH, ILI9341_DARKGREY);
-
-        // Clamp
-        if (lvl < 0) lvl = 0;
-        if (lvl > 1) lvl = 1;
-        if (hold < 0) hold = 0;
-        if (hold > 1) hold = 1;
-
-        int fillH = (int)((meterH - 2) * lvl);
-        if (fillH > 0) {
-            // Color zones: green <0.7, yellow <0.9, red >=0.9
-            uint16_t c = METER_BAR_COLOR;
-            if (lvl >= 0.9f)      c = METER_CLIP_COLOR;
-            else if (lvl >= 0.7f) c = METER_LOUD_COLOR;
-            tft.fillRect(bx + 1, meterY + meterH - 1 - fillH, barW - 2, fillH, c);
-        }
-
-        // Peak-hold tick
-        if (hold > 0.02f) {
-            int hy = meterY + meterH - 1 - (int)((meterH - 2) * hold);
-            tft.drawFastHLine(bx + 1, hy, barW - 2, METER_HOLD_COLOR);
-        }
-    };
-
-    drawOne(lx, meterPeakL, meterHoldL);
-    drawOne(rx, meterPeakR, meterHoldR);
 }
 
 void UI::drawHeaderVoiceDots() {
@@ -404,76 +372,155 @@ void UI::drawHeaderVoiceDots() {
         int cx  = hdrDotsX + col * hdrDotPitch + hdrDotRadius;
         int cy  = hdrDotsY + row * (hdrDotRadius * 2 + 2);
 
-        uint16_t c = DOT_OFF_COLOR;
+        uint16_t c = TH_VOICE_OFF;
         switch (synth.voiceState(i)) {
-            case SynthEngine::VoiceState::Held:      c = DOT_HELD_COLOR;      break;
-            case SynthEngine::VoiceState::Releasing: c = DOT_RELEASING_COLOR; break;
-            case SynthEngine::VoiceState::Idle:
-            default:                                 c = DOT_OFF_COLOR;       break;
+            case SynthEngine::VoiceState::Held:      c = TH_VOICE_HELD; break;
+            case SynthEngine::VoiceState::Releasing: c = TH_VOICE_REL;  break;
+            default: break;
         }
         tft.fillCircle(cx, cy, hdrDotRadius, c);
     }
 }
 
+void UI::drawHeaderMeter() {
+    float pL = synth.peakLevelL();
+    float pR = synth.peakLevelR();
+
+    const float attack  = 0.6f;
+    const float release = 0.15f;
+    meterPeakL += (pL > meterPeakL) ? (pL - meterPeakL) * attack : (pL - meterPeakL) * release;
+    meterPeakR += (pR > meterPeakR) ? (pR - meterPeakR) * attack : (pR - meterPeakR) * release;
+
+    uint32_t now = millis();
+    if (pL >= meterHoldL) { meterHoldL = pL; meterHoldMsL = now; }
+    else if (now - meterHoldMsL > 800) { meterHoldL *= 0.92f; }
+
+    if (pR >= meterHoldR) { meterHoldR = pR; meterHoldMsR = now; }
+    else if (now - meterHoldMsR > 800) { meterHoldR *= 0.92f; }
+
+    int barW = (meterW - 2) / 2;
+    int gapX = 2;
+    int lx = meterX;
+    int rx = meterX + barW + gapX;
+
+    auto drawOne = [&](int bx, float lvl, float hold) {
+        tft.fillRect(bx, meterY, barW, meterH, TH_METER_BG);
+
+        if (lvl < 0) lvl = 0;
+        if (lvl > 1) lvl = 1;
+        if (hold < 0) hold = 0;
+        if (hold > 1) hold = 1;
+
+        int fillH = (int)((meterH) * lvl);
+        if (fillH > 0) {
+            uint16_t c = TH_METER_OK;
+            if (lvl >= 0.9f)      c = TH_METER_CLIP;
+            else if (lvl >= 0.7f) c = TH_METER_LOUD;
+            tft.fillRect(bx, meterY + meterH - fillH, barW, fillH, c);
+        }
+        if (hold > 0.02f) {
+            int hy = meterY + meterH - 1 - (int)((meterH - 1) * hold);
+            tft.drawFastHLine(bx, hy, barW, TH_METER_HOLD);
+        }
+    };
+
+    drawOne(lx, meterPeakL, meterHoldL);
+    drawOne(rx, meterPeakR, meterHoldR);
+}
+
+void UI::drawMidiActivity() {
+    // Layout: "U·D·H" inline. Letters in TH_TEXT_DIM/HI, dots colored when active.
+    tft.fillRect(midiActX, 0, 40, HEADER_H, TH_BG_DARK);
+
+    struct SrcInfo { MidiSource src; const char* label; uint16_t color; };
+    static const SrcInfo srcs[3] = {
+        { MidiSource::UsbDevice, "U", TH_MIDI_USBDEV  },
+        { MidiSource::Din,       "D", TH_MIDI_DIN     },
+        { MidiSource::UsbHost,   "H", TH_MIDI_USBHOST },
+    };
+
+    tft.setTextSize(1);
+    int x = midiActX;
+    for (int i = 0; i < 3; i++) {
+        float k = midiActivity.intensity(srcs[i].src);
+        bool active = (k > 0.0f);
+
+        // Letter
+        tft.setTextColor(active ? TH_TEXT_HI : TH_TEXT_DIM);
+        tft.setCursor(x, midiActY);
+        tft.print(srcs[i].label);
+        x += 6;
+
+        // Dot (small, just to the right of letter)
+        uint16_t c;
+        if (k <= 0.0f) {
+            c = TH_MIDI_OFF;
+        } else {
+            uint8_t r = ((srcs[i].color >> 11) & 0x1F);
+            uint8_t g = ((srcs[i].color >> 5)  & 0x3F);
+            uint8_t b = ( srcs[i].color        & 0x1F);
+            r = (uint8_t)(r * k);
+            g = (uint8_t)(g * k);
+            b = (uint8_t)(b * k);
+            c = (uint16_t)((r << 11) | (g << 5) | b);
+            if (c == 0) c = TH_MIDI_OFF;
+        }
+        tft.fillCircle(x + 2, midiActY + 4, 2, c);
+        x += 7;
+    }
+}
+
 void UI::drawHeader() {
-    tft.fillRect(0, 0, SCREEN_W, HEADER_H, HEADER_BG);
+    tft.fillRect(0, 0, SCREEN_W, HEADER_H, TH_BG_DARK);
 
     drawHeaderCpu();
     drawHeaderVoiceDots();
 
-    // Patch name centered in the remaining zone
-    tft.setTextColor(ILI9341_WHITE);
+    // Patch name centered between dots and meter
+    tft.setTextColor(TH_TEXT_HI);
     tft.setTextSize(1);
-
     const char* name = synth.patch().name;
     int nameW  = strlen(name) * 6;
     int availW = meterX - hdrNameX - 6;
     int nx     = hdrNameX + (availW - nameW) / 2;
     if (nx < hdrNameX) nx = hdrNameX;
-
     tft.setCursor(nx, hdrCpuY);
     tft.print(name);
 
-    drawCalButton(false);
     drawHeaderMeter();
-    drawMidiActivity();   // <-- ADD
+    drawMidiActivity();
+    drawCalButton(false);
 
+    // Bottom rule
+    drawHRule(HEADER_H - 1);
 }
 
-void UI::drawTabs() {
-    tft.fillRect(0, TABS_Y, SCREEN_W, TABS_H, ILI9341_BLACK);
-    int tabW = SCREEN_W / PAGE_COUNT;
+// =============================================================================
+// Tabs — Ableton-style: text only, accent bar above active
+// =============================================================================
 
+void UI::drawTabs() {
+    tft.fillRect(0, TABS_Y, SCREEN_W, TABS_H, TH_BG_DEEPEST);
+
+    int tabW = SCREEN_W / PAGE_COUNT;
     for (int i = 0; i < PAGE_COUNT; i++) {
         int x = i * tabW;
         bool active = (i == currentPage);
 
-        uint16_t bg = active ? TAB_ACTIVE_BG   : TAB_INACTIVE_BG;
-        uint16_t fg = active ? TAB_ACTIVE_FG   : TAB_INACTIVE_FG;
-
-        // Fill the tab
-        tft.fillRect(x + 1, TABS_Y, tabW - 2, TABS_H - 1, bg);
-
-        // Soft separator between tabs
-        if (i > 0) {
-            tft.drawFastVLine(x, TABS_Y + 2, TABS_H - 4, TAB_SEP_COLOR);
-        }
-
-        // Active tab accent bar along the bottom
+        // Accent bar above active tab
         if (active) {
-            tft.fillRect(x + 1, TABS_Y + TABS_H - 2, tabW - 2, 2, TAB_ACTIVE_EDGE);
+            tft.fillRect(x + 4, TABS_Y, tabW - 8, TH_ACCENT_BAR_H, TH_ACCENT);
         }
 
         // Label
-        tft.setTextColor(fg);
+        tft.setTextColor(active ? TH_TEXT_HI : TH_TEXT_DIM);
         tft.setTextSize(1);
         int tw = strlen(pageNames[i]) * 6;
-        tft.setCursor(x + (tabW - tw) / 2, TABS_Y + (TABS_H - 8) / 2 - 1);
+        tft.setCursor(x + (tabW - tw) / 2, TABS_Y + (TABS_H - 8) / 2 + 1);
         tft.print(pageNames[i]);
     }
 
-    // Thin line under the whole tab bar — softens the transition to the body
-    tft.drawFastHLine(0, TABS_Y + TABS_H - 1, SCREEN_W, TAB_SEP_COLOR);
+    drawHRule(TABS_Y + TABS_H - 1);
 }
 
 int UI::tabHitTest(int x, int y) const {
@@ -484,141 +531,125 @@ int UI::tabHitTest(int x, int y) const {
     return -1;
 }
 
-// ---- Page drawers ----
+// =============================================================================
+// Page bodies
+// =============================================================================
+
 void UI::drawOscPage() {
-    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
-    for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
+    for (int i = 0; i < pageSliderCount; i++) drawSlimSlider(pageSliders[i]);
 
     PatchData& p = synth.patch();
-    static const char* dests[] = {"OFF","PIT","PW","FIL"};
+    static const char* dests[] = {"OFF","PITCH","PW","FILT"};
     drawDestStrip(dests, 4, p.lfoDest, "LFO DEST");
 }
 
 void UI::drawVcfPage() {
-    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
-    for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
+    for (int i = 0; i < pageSliderCount; i++) drawSlimSlider(pageSliders[i]);
 }
 
 void UI::drawEnvPage() {
-    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
 
-    tft.setTextColor(ILI9341_CYAN);
+    tft.setTextColor(TH_TEXT_DIM);
     tft.setTextSize(1);
+    tft.setCursor(40,  ENV_LABEL_Y);  tft.print("AMP");
+    tft.setCursor(160, ENV_LABEL_Y);  tft.print("FILTER");
+    tft.setCursor(280, ENV_LABEL_Y);  tft.print("VEL");
 
-    // Section labels centered over each group
-    // AMP ENV:  sliders at x=6..119, center ≈ 62, text 7*6=42 → start ≈ 41
-    tft.setCursor( 41, ENV_LABEL_Y); tft.print("AMP ENV");
-    // FILTER ENV: sliders at x=129..242, center ≈ 185, text 10*6=60 → start ≈ 155
-    tft.setCursor(155, ENV_LABEL_Y); tft.print("FILTER ENV");
-    // VEL: slider at x=252..278, center ≈ 265, text 3*6=18 → start ≈ 256
-    tft.setCursor(256, ENV_LABEL_Y); tft.print("VEL");
-
-    for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
+    for (int i = 0; i < pageSliderCount; i++) drawSlimSlider(pageSliders[i]);
 
     static const char* labels[] = { "OFF", "VCA", "CUT", "LFO" };
     drawDestStrip(labels, 4, synth.patch().velDest, "VEL DEST");
 }
 
 void UI::drawChorusPage() {
-    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
+
     const char* modes[] = { "OFF", "CHORUS I", "CHORUS II" };
     uint8_t cur = synth.patch().chorusMode;
 
-    int bw = 76, bh = 24, gap = 6;
-    int totalW = 3*bw + 2*gap;
-    int bx = (SCREEN_W - totalW)/2;
-    int by = BODY_Y + 8;
-    tft.setTextSize(1);
+    int bw = 80, bh = 22, gap = 6;
+    int totalW = 3 * bw + 2 * gap;
+    int bx = (SCREEN_W - totalW) / 2;
+    int by = BODY_Y + 14;
     for (int i = 0; i < 3; i++) {
-        uint16_t bg = (cur == i) ? ILI9341_ORANGE : ILI9341_DARKGREY;
-        int xx = bx + i*(bw + gap);
-        tft.fillRoundRect(xx, by, bw, bh, 4, bg);
-        tft.drawRoundRect(xx, by, bw, bh, 4, ILI9341_WHITE);
-        tft.setTextColor(ILI9341_WHITE);
-        int tw = strlen(modes[i]) * 6;
-        tft.setCursor(xx + (bw - tw)/2, by + (bh - 8)/2);
-        tft.print(modes[i]);
+        int xx = bx + i * (bw + gap);
+        drawOutlinedButton(xx, by, bw, bh, modes[i], cur == i);
     }
 
-    for (int i = 0; i < pageSliderCount; i++) drawSliderAt(pageSliders[i]);
+    for (int i = 0; i < pageSliderCount; i++) drawSlimSlider(pageSliders[i]);
 }
 
 void UI::drawPerfPage() {
-    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
-    tft.setTextColor(ILI9341_CYAN);
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
+
+    tft.setTextColor(TH_TEXT_DIM);
     tft.setTextSize(1);
-    tft.setCursor(10, BODY_Y + 4);
-    tft.print("ARPEGGIATOR");
+    tft.setCursor(8, BODY_Y + 6); tft.print("ARPEGGIATOR");
 
     const char* modes[] = { "OFF", "UP", "DN", "UD", "RND" };
-    int bw = 40, bh = 20, gap = 6;
-    int bx = 10, by = BODY_Y + 22;
+    int bw = 44, bh = 18, gap = 4;
+    int bx = 8, by = BODY_Y + 20;
     ArpMode cur = arp.getMode();
-    tft.setTextSize(1);
     for (int i = 0; i < 5; i++) {
-        int xx = bx + i*(bw+gap);
-        uint16_t bg = (cur == i) ? ILI9341_ORANGE : ILI9341_DARKGREY;
-        tft.fillRoundRect(xx, by, bw, bh, 3, bg);
-        tft.drawRoundRect(xx, by, bw, bh, 3, ILI9341_WHITE);
-        tft.setTextColor(ILI9341_WHITE);
-        int tw = strlen(modes[i]) * 6;
-        tft.setCursor(xx + (bw - tw)/2, by + (bh - 8)/2);
-        tft.print(modes[i]);
+        int xx = bx + i * (bw + gap);
+        drawOutlinedButton(xx, by, bw, bh, modes[i], cur == i);
     }
 
-    int row2y = by + bh + 10;
     auto drawIncBtn = [&](int x, int y, int w, int h, const char* label) {
-        tft.fillRoundRect(x, y, w, h, 3, ILI9341_DARKGREY);
-        tft.drawRoundRect(x, y, w, h, 3, ILI9341_WHITE);
-        tft.setTextColor(ILI9341_WHITE); tft.setTextSize(1);
-        int tw = strlen(label) * 6;
-        tft.setCursor(x + (w - tw)/2, y + (h - 8)/2);
-        tft.print(label);
+        drawOutlinedButton(x, y, w, h, label, false);
     };
 
-    tft.setTextSize(1); tft.setTextColor(ILI9341_WHITE);
-    tft.setCursor(10, row2y + 4); tft.print("RATE");
-    drawIncBtn(64, row2y, 22, 20, "-");
-    tft.setCursor(94, row2y + 4);
+    int row2y = by + bh + 10;
+    tft.setTextSize(1);
+    tft.setTextColor(TH_TEXT_DIM);
+    tft.setCursor(8, row2y + 4); tft.print("RATE");
+    drawIncBtn(60, row2y, 20, 18, "-");
+    tft.setTextColor(TH_TEXT_HI);
+    tft.setCursor(88, row2y + 4);
     tft.printf("%.1fHz", arp.getRateHz());
-    drawIncBtn(160, row2y, 22, 20, "+");
+    drawIncBtn(150, row2y, 20, 18, "+");
 
-    int row3y = row2y + 28;
-    tft.setCursor(10, row3y + 4); tft.print("OCT");
-    drawIncBtn(64, row3y, 22, 20, "-");
-    tft.setCursor(94, row3y + 4);
+    int row3y = row2y + 24;
+    tft.setTextColor(TH_TEXT_DIM);
+    tft.setCursor(8, row3y + 4); tft.print("OCT");
+    drawIncBtn(60, row3y, 20, 18, "-");
+    tft.setTextColor(TH_TEXT_HI);
+    tft.setCursor(88, row3y + 4);
     tft.printf("%d", arp.getOctaves());
-    drawIncBtn(160, row3y, 22, 20, "+");
+    drawIncBtn(150, row3y, 20, 18, "+");
 
-// Separator gap + MIDI section
-    int sepY  = row3y + 28;               // was the old row4y
-    int row4y = sepY + 14;                // push the row down by 14 px
+    // MIDI section
+    int sepY = row3y + 26;
+    drawHRule(sepY, TH_RULE);
 
-    // Section divider line + label
-    tft.drawFastHLine(10, sepY + 2, SCREEN_W - 20, 0x2D7F);  // subtle accent line
-    tft.setTextColor(ILI9341_CYAN);
-    tft.setTextSize(1);
-    tft.setCursor(10, sepY + 6);
-    tft.print("MIDI");
+    int midiLabelY = sepY + 6;
+    tft.setTextColor(TH_TEXT_DIM);
+    tft.setCursor(8, midiLabelY); tft.print("MIDI");
 
-    // MIDI channel row
-    tft.setTextSize(1);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setCursor(10, row4y + 4); tft.print("CH");
-    drawIncBtn(64, row4y, 22, 20, "-");
-    tft.setCursor(94, row4y + 4);
+    int row4y = midiLabelY + 14;
+    tft.setTextColor(TH_TEXT_DIM);
+    tft.setCursor(8, row4y + 4); tft.print("CH");
+    drawIncBtn(60, row4y, 20, 18, "-");
+    tft.setTextColor(TH_TEXT_HI);
+    tft.setCursor(88, row4y + 4);
     uint8_t ch = synth.patch().midiChannel;
     if (ch == 0) tft.print("ALL");
     else         tft.printf("%d", ch);
-    drawIncBtn(160, row4y, 22, 20, "+");
+    drawIncBtn(150, row4y, 20, 18, "+");
 }
 
-// ---- Patch page ----
+// =============================================================================
+// Patch page — list-style with rules
+// =============================================================================
+
 static const int PATCH_COLS = 2;
 static const int PATCH_ROWS = NUM_PATCH_SLOTS / PATCH_COLS;
 
 static void patchSlotRect(int idx, int& x, int& y, int& w, int& h) {
-    const int rightReserved = 72;
+    const int rightReserved = 70;
     const int gridW = SCREEN_W - rightReserved - 4;
     const int gridH = BODY_H - 6;
 
@@ -628,14 +659,14 @@ static void patchSlotRect(int idx, int& x, int& y, int& w, int& h) {
     int cellW = gridW / PATCH_COLS;
     int cellH = gridH / PATCH_ROWS;
 
-    x = 3 + col * cellW;
+    x = 2 + col * cellW;
     y = BODY_Y + 3 + row * cellH;
-    w = cellW - 2;
-    h = cellH - 1;
+    w = cellW - 1;
+    h = cellH;
 }
 
 void UI::drawPatchPage() {
-    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, ILI9341_BLACK);
+    tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
 
     char nm[17];
     for (int i = 0; i < NUM_PATCH_SLOTS; i++) {
@@ -646,51 +677,59 @@ void UI::drawPatchPage() {
         bool sel    = (i == selectedSlot);
         bool loaded = (i == loadedSlot);
 
-        uint16_t bg   = sel    ? ILI9341_ORANGE : (has ? ILI9341_NAVY : 0x2104);
-        uint16_t edge = loaded ? ILI9341_CYAN   : ILI9341_DARKGREY;
+        // Selected: inverted (orange fill)
+        if (sel) {
+            tft.fillRect(x, y, w, h, TH_ACCENT_DIM);
+        }
 
-        tft.fillRoundRect(x, y, w, h, 2, bg);
-        tft.drawRoundRect(x, y, w, h, 2, edge);
+        // Loaded indicator: dot on the left
+        if (loaded) {
+            tft.fillCircle(x + 4, y + h / 2, 2, sel ? TH_TEXT_HI : TH_ACCENT);
+        }
 
-        tft.setTextColor(sel ? ILI9341_BLACK : ILI9341_WHITE);
+        // Slot number + name
+        uint16_t txt = sel ? TH_TEXT_HI : (has ? TH_TEXT_NORM : TH_TEXT_DIM);
+        tft.setTextColor(txt);
         tft.setTextSize(1);
 
         char line[24];
         if (has) {
-            snprintf(line, sizeof(line), "%02d %s", i, nm);
+            snprintf(line, sizeof(line), "%02d  %s", i, nm);
         } else {
-            snprintf(line, sizeof(line), "%02d --", i);
+            snprintf(line, sizeof(line), "%02d  --", i);
         }
-
-        int maxChars = (w - 6) / 6;
+        int maxChars = (w - 14) / 6;
         if (maxChars < 3) maxChars = 3;
         if ((int)strlen(line) > maxChars) line[maxChars] = 0;
 
-        tft.setCursor(x + 4, y + (h - 8) / 2);
+        tft.setCursor(x + 10, y + (h - 8) / 2);
         tft.print(line);
+
+        // Bottom rule (very subtle)
+        if (!sel) {
+            tft.drawFastHLine(x + 2, y + h - 1, w - 4, TH_RULE);
+        }
     }
 
-    // Action buttons
-    int bw = 60, bh = 20;
-    int bx = SCREEN_W - bw - 4;
-    int by1 = BODY_Y + 6;
-    int by2 = by1 + bh + 4;
-    int by3 = by2 + bh + 4;
-    int by4 = by3 + bh + 4;
+    // Vertical rule between columns
+    int colSepX = 2 + (SCREEN_W - 70 - 4) / 2;
+    tft.drawFastVLine(colSepX, BODY_Y + 3, BODY_H - 6, TH_RULE);
 
-    auto drawBtn = [&](int y, const char* label, uint16_t bg) {
-        tft.fillRoundRect(bx, y, bw, bh, 3, bg);
-        tft.drawRoundRect(bx, y, bw, bh, 3, ILI9341_WHITE);
-        tft.setTextColor(ILI9341_WHITE);
-        tft.setTextSize(1);
-        int tw = strlen(label) * 6;
-        tft.setCursor(bx + (bw - tw)/2, y + (bh - 8)/2);
-        tft.print(label);
-    };
-    drawBtn(by1, "LOAD",   ILI9341_DARKGREEN);
-    drawBtn(by2, "SAVE",   ILI9341_MAROON);
-    drawBtn(by3, "RENAME", ILI9341_NAVY);
-    drawBtn(by4, "INIT",   ILI9341_DARKGREY);
+    // Vertical rule before action button column
+    tft.drawFastVLine(SCREEN_W - 70, BODY_Y + 2, BODY_H - 4, TH_RULE);
+
+    // Action buttons (outlined)
+    int bw = 60, bh = 18;
+    int bx = SCREEN_W - bw - 5;
+    int by1 = BODY_Y + 6;
+    int by2 = by1 + bh + 5;
+    int by3 = by2 + bh + 5;
+    int by4 = by3 + bh + 5;
+
+    drawOutlinedButton(bx, by1, bw, bh, "LOAD");
+    drawOutlinedButton(bx, by2, bw, bh, "SAVE");
+    drawOutlinedButton(bx, by3, bw, bh, "RENAME");
+    drawOutlinedButton(bx, by4, bw, bh, "INIT");
 }
 
 int UI::patchSlotHitTest(int px, int py) const {
@@ -701,16 +740,22 @@ int UI::patchSlotHitTest(int px, int py) const {
     return -1;
 }
 
+// =============================================================================
+// Status, body, full redraw
+// =============================================================================
+
 void UI::showStatus(const char* msg, uint16_t color) {
-    int w = SCREEN_W - 20, h = 32;
-    int x = 10, y = SCREEN_H/2 - h/2;
-    tft.fillRoundRect(x, y, w, h, 5, color);
-    tft.drawRoundRect(x, y, w, h, 5, ILI9341_WHITE);
-    tft.setTextColor(ILI9341_WHITE);
+    int w = 200, h = 28;
+    int x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
+
+    tft.fillRect(x, y, w, h, TH_BG_PANEL);
+    tft.drawRect(x, y, w, h, color);
+    tft.setTextColor(TH_TEXT_HI);
     tft.setTextSize(1);
     int tw = strlen(msg) * 6;
-    tft.setCursor(x + (w - tw)/2, y + (h - 8)/2);
+    tft.setCursor(x + (w - tw) / 2, y + (h - 8) / 2);
     tft.print(msg);
+
     delay(700);
     drawBody();
 }
@@ -729,7 +774,7 @@ void UI::drawBody() {
 }
 
 void UI::drawAll() {
-    tft.fillScreen(ILI9341_BLACK);
+    tft.fillScreen(TH_BG_DEEPEST);
     drawHeader();
     drawTabs();
     drawBody();
@@ -749,25 +794,24 @@ int UI::sliderHitTest(int x, int y) const {
 }
 
 bool UI::confirmRecalibrate() {
-    const int boxW = 220, boxH = 100;
+    const int boxW = 220, boxH = 90;
     const int bx = (SCREEN_W - boxW) / 2;
     const int by = (SCREEN_H - boxH) / 2;
-    tft.fillRoundRect(bx, by, boxW, boxH, 6, ILI9341_NAVY);
-    tft.drawRoundRect(bx, by, boxW, boxH, 6, ILI9341_WHITE);
-    tft.setTextColor(ILI9341_WHITE);
+
+    tft.fillRect(bx, by, boxW, boxH, TH_BG_PANEL);
+    tft.drawRect(bx, by, boxW, boxH, TH_TEXT_DIM);
+
+    tft.setTextColor(TH_TEXT_HI);
     tft.setTextSize(1);
-    tft.setCursor(bx + 12, by + 12); tft.print("Recalibrate touch?");
-    tft.setCursor(bx + 12, by + 28); tft.print("Tap 3 corner crosshairs.");
-    int btnW = 64, btnH = 26;
+    tft.setCursor(bx + 12, by + 10); tft.print("RECALIBRATE TOUCH?");
+    tft.setTextColor(TH_TEXT_DIM);
+    tft.setCursor(bx + 12, by + 24); tft.print("Tap 3 corner crosshairs.");
+
+    int btnW = 64, btnH = 22;
     int yesX = bx + 18, yesY = by + boxH - btnH - 12;
     int noX  = bx + boxW - btnW - 18, noY = yesY;
-    tft.fillRoundRect(yesX, yesY, btnW, btnH, 4, ILI9341_DARKGREEN);
-    tft.drawRoundRect(yesX, yesY, btnW, btnH, 4, ILI9341_WHITE);
-    tft.setTextColor(ILI9341_WHITE);
-    tft.setCursor(yesX + (btnW - 18)/2, yesY + (btnH - 8)/2); tft.print("YES");
-    tft.fillRoundRect(noX, noY, btnW, btnH, 4, ILI9341_MAROON);
-    tft.drawRoundRect(noX, noY, btnW, btnH, 4, ILI9341_WHITE);
-    tft.setCursor(noX + (btnW - 12)/2, noY + (btnH - 8)/2); tft.print("NO");
+    drawOutlinedButton(yesX, yesY, btnW, btnH, "YES", true);
+    drawOutlinedButton(noX, noY, btnW, btnH, "NO");
 
     while (ts.touched()) delay(10);
     delay(80);
@@ -777,8 +821,8 @@ bool UI::confirmRecalibrate() {
             TS_Point p = ts.getPoint();
             int16_t sx, sy; touchCal.mapToScreen(p.x, p.y, sx, sy);
             while (ts.touched()) delay(10);
-            if (sx >= yesX && sx <= yesX+btnW && sy >= yesY && sy <= yesY+btnH) return true;
-            if (sx >= noX  && sx <= noX +btnW && sy >= noY  && sy <= noY +btnH) return false;
+            if (sx >= yesX && sx <= yesX + btnW && sy >= yesY && sy <= yesY + btnH) return true;
+            if (sx >= noX  && sx <= noX  + btnW && sy >= noY  && sy <= noY  + btnH) return false;
         }
         delay(10);
     }
@@ -794,6 +838,10 @@ void UI::onPatchSlotTap(int slotIdx) {
     selectedSlot = slotIdx;
     drawPatchPage();
 }
+
+// =============================================================================
+// Touch dispatch (logic identical to before, just visual changes above)
+// =============================================================================
 
 void UI::handleTouch(int x, int y) {
     if (inCalButton(x, y)) {
@@ -825,7 +873,7 @@ void UI::handleTouch(int x, int y) {
         }
         *s.value = v;
         synth.setParam(s.paramId, v);
-        drawSliderAt(s);
+        drawSlimSlider(s);
         return;
     }
 
@@ -844,12 +892,12 @@ void UI::handleTouch(int x, int y) {
             return;
         }
     } else if (currentPage == PAGE_CHORUS) {
-        int bw = 76, bh = 24, gap = 6;
-        int totalW = 3*bw + 2*gap;
-        int bx = (SCREEN_W - totalW)/2;
-        int by = BODY_Y + 8;
+        int bw = 80, bh = 22, gap = 6;
+        int totalW = 3 * bw + 2 * gap;
+        int bx = (SCREEN_W - totalW) / 2;
+        int by = BODY_Y + 14;
         for (int i = 0; i < 3; i++) {
-            int xx = bx + i*(bw + gap);
+            int xx = bx + i * (bw + gap);
             if (x >= xx && x <= xx + bw && y >= by && y <= by + bh) {
                 PatchData& p = synth.patch();
                 p.chorusMode = (uint8_t)i;
@@ -861,11 +909,11 @@ void UI::handleTouch(int x, int y) {
             }
         }
     } else if (currentPage == PAGE_PERF) {
-        int bw = 40, bh = 20, gap = 6;
-        int bx0 = 10, by = BODY_Y + 22;
+        int bw = 44, bh = 18, gap = 4;
+        int bx0 = 8, by = BODY_Y + 20;
         if (y >= by && y <= by + bh) {
             for (int i = 0; i < 5; i++) {
-                int xx = bx0 + i*(bw+gap);
+                int xx = bx0 + i * (bw + gap);
                 if (x >= xx && x <= xx + bw) {
                     arp.setMode((ArpMode)i);
                     drawPerfPage();
@@ -874,57 +922,56 @@ void UI::handleTouch(int x, int y) {
             }
         }
         int row2y = by + bh + 10;
-        if (y >= row2y && y <= row2y + 20) {
-            if (x >= 64 && x <= 86)   { arp.setRateHz(arp.getRateHz() - 0.5f); drawPerfPage(); return; }
-            if (x >= 160 && x <= 182) { arp.setRateHz(arp.getRateHz() + 0.5f); drawPerfPage(); return; }
+        if (y >= row2y && y <= row2y + 18) {
+            if (x >= 60 && x <= 80)   { arp.setRateHz(arp.getRateHz() - 0.5f); drawPerfPage(); return; }
+            if (x >= 150 && x <= 170) { arp.setRateHz(arp.getRateHz() + 0.5f); drawPerfPage(); return; }
         }
-        int row3y = row2y + 28;
-        if (y >= row3y && y <= row3y + 20) {
-            if (x >= 64 && x <= 86)   { arp.setOctaves(arp.getOctaves() - 1); drawPerfPage(); return; }
-            if (x >= 160 && x <= 182) { arp.setOctaves(arp.getOctaves() + 1); drawPerfPage(); return; }
+        int row3y = row2y + 24;
+        if (y >= row3y && y <= row3y + 18) {
+            if (x >= 60 && x <= 80)   { arp.setOctaves(arp.getOctaves() - 1); drawPerfPage(); return; }
+            if (x >= 150 && x <= 170) { arp.setOctaves(arp.getOctaves() + 1); drawPerfPage(); return; }
         }
-    int sepY  = row3y + 28;
-    int row4y = sepY + 14;
-    if (y >= row4y && y <= row4y + 20) {
-        uint8_t& c = synth.patch().midiChannel;
-        if (x >= 64 && x <= 86) {
-            if (c == 0) c = 16;
-            else c--;
-            drawPerfPage();
-            return;
+        int sepY = row3y + 26;
+        int midiLabelY = sepY + 6;
+        int row4y = midiLabelY + 14;
+        if (y >= row4y && y <= row4y + 18) {
+            uint8_t& c = synth.patch().midiChannel;
+            if (x >= 60 && x <= 80) {
+                if (c == 0) c = 16;
+                else c--;
+                drawPerfPage();
+                return;
+            }
+            if (x >= 150 && x <= 170) {
+                c = (c + 1) % 17;
+                drawPerfPage();
+                return;
+            }
         }
-        if (x >= 160 && x <= 182) {
-            c = (c + 1) % 17;
-            drawPerfPage();
-            return;
-        }
-    }
     } else if (currentPage == PAGE_PATCH) {
         int slot = patchSlotHitTest(x, y);
         if (slot >= 0) { onPatchSlotTap(slot); return; }
 
-        int bw = 60, bh = 20;
-        int bx = SCREEN_W - bw - 4;
+        int bw = 60, bh = 18;
+        int bx = SCREEN_W - bw - 5;
         int by1 = BODY_Y + 6;
-        int by2 = by1 + bh + 4;
-        int by3 = by2 + bh + 4;
-        int by4 = by3 + bh + 4;
+        int by2 = by1 + bh + 5;
+        int by3 = by2 + bh + 5;
+        int by4 = by3 + bh + 5;
 
         if (x >= bx && x <= bx + bw) {
-            // LOAD
             if (y >= by1 && y <= by1 + bh) {
                 PatchData p;
                 if (patchManager.loadPatch(selectedSlot, p)) {
                     synth.applyPatch(p);
                     loadedSlot = selectedSlot;
                     drawHeader();
-                    showStatus("LOADED", ILI9341_DARKGREEN);
+                    showStatus("LOADED", TH_BTN_OK);
                 } else {
-                    showStatus("EMPTY SLOT", ILI9341_MAROON);
+                    showStatus("EMPTY SLOT", TH_BTN_WARN);
                 }
                 return;
             }
-            // SAVE
             if (y >= by2 && y <= by2 + bh) {
                 PatchData& p = synth.patch();
                 char seed[17];
@@ -946,14 +993,13 @@ void UI::handleTouch(int x, int y) {
                 if (saved) loadedSlot = selectedSlot;
                 drawAll();
                 showStatus(saved ? "SAVED" : "SAVE FAIL",
-                           saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
+                           saved ? TH_BTN_OK : TH_BTN_WARN);
                 return;
             }
-            // RENAME
             if (y >= by3 && y <= by3 + bh) {
                 PatchData p;
                 if (!patchManager.loadPatch(selectedSlot, p)) {
-                    showStatus("EMPTY SLOT", ILI9341_MAROON);
+                    showStatus("EMPTY SLOT", TH_BTN_WARN);
                     return;
                 }
                 char newName[17];
@@ -972,17 +1018,16 @@ void UI::handleTouch(int x, int y) {
                 }
                 drawAll();
                 showStatus(saved ? "RENAMED" : "RENAME FAIL",
-                           saved ? ILI9341_DARKGREEN : ILI9341_MAROON);
+                           saved ? TH_BTN_OK : TH_BTN_WARN);
                 return;
             }
-            // INIT
             if (y >= by4 && y <= by4 + bh) {
                 PatchData init;
                 synth.applyPatch(init);
                 loadedSlot = -1;
                 drawHeader();
                 drawBody();
-                showStatus("INIT PATCH", ILI9341_NAVY);
+                showStatus("INIT", TH_TEXT_DIM);
                 return;
             }
         }
@@ -1004,16 +1049,14 @@ void UI::update() {
         handleTouch(sx, sy);
     }
 
-    // CPU + voice dots refresh at ~10 Hz
     if (now - lastMeterMs >= 100) {
         lastMeterMs = now;
         drawHeaderCpu();
         drawHeaderVoiceDots();
         drawHeaderMeter();
-        drawMidiActivity();    // <-- NEW
+        drawMidiActivity();
     }
 
-    // Full header redraw only when the patch name actually changes
     if (strncmp(lastNameShown, synth.patch().name, 16) != 0) {
         strncpy(lastNameShown, synth.patch().name, 16);
         lastNameShown[16] = 0;
