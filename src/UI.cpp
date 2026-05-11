@@ -15,7 +15,9 @@ static XPT2046_Touchscreen ts(TOUCH_CS, TOUCH_IRQ);
 
 UI ui;
 
-// ---- Slider description ----
+// -----------------------------------------------------------------------------
+// Slider description (vertical)
+// -----------------------------------------------------------------------------
 struct Slider {
     const char* label;
     int x, y, w, h;
@@ -23,13 +25,28 @@ struct Slider {
     float  min, max;
     bool   logarithmic;
     ParamId paramId;
-    const char* unit;   // e.g. "Hz", "ms", "%"; nullptr for none
+    const char* unit;     // "Hz", "ms", "%", "smp", or nullptr
 };
 
 static Slider pageSliders[12];
 static int    pageSliderCount = 0;
 
-// ---- Layout (using theme heights) ----
+// -----------------------------------------------------------------------------
+// Inline (horizontal) slider description
+// -----------------------------------------------------------------------------
+struct InlineSlider {
+    int x, y, w, h;
+    float* value;
+    float  min, max;
+    bool   logarithmic;
+    ParamId paramId;
+    const char* label;
+    const char* unit;
+};
+
+// -----------------------------------------------------------------------------
+// Layout constants
+// -----------------------------------------------------------------------------
 static constexpr int HEADER_H  = TH_HEADER_H;
 static constexpr int TABS_Y    = HEADER_H;
 static constexpr int TABS_H    = TH_TABS_H;
@@ -39,12 +56,10 @@ static constexpr int SLIDER_W  = 32;
 static constexpr int SLIDER_H  = 110;
 static constexpr int SLIDER_Y  = BODY_Y + 10;
 
-// ENV page custom offsets (sliders + bottom strip)
 static constexpr int ENV_LABEL_Y  = BODY_Y + 4;
 static constexpr int ENV_SLIDER_Y = BODY_Y + 18;
 static constexpr int ENV_SLIDER_H = SLIDER_H - 18;
 
-// Bottom-row destination strip
 static constexpr int DEST_BTN_W   = 44;
 static constexpr int DEST_BTN_H   = 16;
 static constexpr int DEST_BTN_GAP = 2;
@@ -52,7 +67,7 @@ static constexpr int DEST_BTN_GAP = 2;
 static const char* pageNames[PAGE_COUNT] = { "PATCH", "OSC", "VCF", "ENV", "CHORUS", "PERF" };
 
 // =============================================================================
-// Drawing primitives — Ableton-style
+// Drawing primitives
 // =============================================================================
 
 static void drawHRule(int y, uint16_t color = TH_RULE) {
@@ -64,7 +79,6 @@ static void drawOutlinedButton(int x, int y, int w, int h, const char* label,
     uint16_t edge = active ? TH_ACCENT : (warn ? TH_BTN_WARN : TH_TEXT_DIM);
     uint16_t txt  = active ? TH_TEXT_HI : (warn ? TH_TEXT_HI : TH_TEXT_NORM);
 
-    // Optional subtle inner fill when active
     if (active) {
         tft.fillRect(x + 1, y + 1, w - 2, h - 2, TH_BG_PANEL_HI);
     } else {
@@ -79,7 +93,6 @@ static void drawOutlinedButton(int x, int y, int w, int h, const char* label,
     tft.print(label);
 }
 
-// Format a slider value for display (handles common ranges)
 static void formatValue(char* out, size_t n, float v, const Slider& s) {
     if (s.unit && strcmp(s.unit, "Hz") == 0) {
         if (v < 10.0f) snprintf(out, n, "%.2fHz", v);
@@ -92,7 +105,6 @@ static void formatValue(char* out, size_t n, float v, const Slider& s) {
     } else if (s.unit && strcmp(s.unit, "smp") == 0) {
         snprintf(out, n, "%.0f", v);
     } else {
-        // Default: 2 decimals if small range, integer if large
         if (s.max <= 2.0f)        snprintf(out, n, "%.2f", v);
         else if (s.max <= 10.0f)  snprintf(out, n, "%.1f", v);
         else                      snprintf(out, n, "%.0f", v);
@@ -100,17 +112,14 @@ static void formatValue(char* out, size_t n, float v, const Slider& s) {
 }
 
 static void drawSlimSlider(const Slider& s) {
-    // Clear column area (track + label zone + value zone)
     tft.fillRect(s.x, s.y, s.w, s.h + 22, TH_BG_DEEPEST);
 
     int trackX = s.x + s.w / 2;
     int trackY = s.y;
     int trackH = s.h;
 
-    // Vertical track line (thin)
     tft.drawFastVLine(trackX, trackY, trackH, TH_BG_PANEL_HI);
 
-    // Compute handle position
     float v = *s.value;
     float norm;
     if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
@@ -123,22 +132,18 @@ static void drawSlimSlider(const Slider& s) {
 
     int handleY = trackY + trackH - 1 - (int)((trackH - 1) * norm);
 
-    // Active range below the handle (brighter)
     if (handleY < trackY + trackH - 1) {
         tft.drawFastVLine(trackX, handleY, trackY + trackH - handleY, TH_TEXT_NORM);
     }
 
-    // Handle bar (5 px wide, 3 px tall)
     tft.fillRect(trackX - 6, handleY - 1, 13, 3, TH_ACCENT);
 
-    // Label below
     tft.setTextSize(1);
     tft.setTextColor(TH_TEXT_DIM);
     int tw = strlen(s.label) * 6;
     tft.setCursor(s.x + (s.w - tw) / 2, s.y + s.h + 3);
     tft.print(s.label);
 
-    // Numeric value below label
     char vbuf[12];
     formatValue(vbuf, sizeof(vbuf), v, s);
     tft.setTextColor(TH_TEXT_NORM);
@@ -147,10 +152,73 @@ static void drawSlimSlider(const Slider& s) {
     tft.print(vbuf);
 }
 
+// -----------------------------------------------------------------------------
+// Inline slider helpers
+// -----------------------------------------------------------------------------
+static void drawInlineSlider(const InlineSlider& s) {
+    tft.fillRect(s.x, s.y, s.w, s.h, TH_BG_DEEPEST);
+
+    tft.setTextSize(1);
+    tft.setTextColor(TH_TEXT_DIM);
+    int labelW = strlen(s.label) * 6;
+    tft.setCursor(s.x, s.y + (s.h - 8) / 2);
+    tft.print(s.label);
+
+    int trackX0 = s.x + labelW + 4;
+    int trackX1 = s.x + s.w - 28;     // reserve 28 px on right for value
+    int trackW  = trackX1 - trackX0;
+    int trackY  = s.y + s.h / 2;
+
+    tft.drawFastHLine(trackX0, trackY, trackW, TH_BG_PANEL_HI);
+
+    float v = *s.value;
+    float norm;
+    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
+        norm = logf(v / s.min) / logf(s.max / s.min);
+    } else {
+        norm = (v - s.min) / (s.max - s.min);
+    }
+    if (norm < 0) norm = 0;
+    if (norm > 1) norm = 1;
+
+    int handleX = trackX0 + (int)(trackW * norm);
+
+    if (handleX > trackX0) {
+        tft.drawFastHLine(trackX0, trackY, handleX - trackX0, TH_TEXT_NORM);
+    }
+    tft.fillRect(handleX - 1, trackY - 2, 3, 5, TH_ACCENT);
+
+    char vbuf[12];
+    Slider tmp = { "", 0, 0, 0, 0, s.value, s.min, s.max, s.logarithmic, s.paramId, s.unit };
+    formatValue(vbuf, sizeof(vbuf), v, tmp);
+    tft.setTextColor(TH_TEXT_NORM);
+    tft.setCursor(s.x + s.w - 26, s.y + (s.h - 8) / 2);
+    tft.print(vbuf);
+}
+
+static void inlineSliderApply(const InlineSlider& s, int x) {
+    int labelW = strlen(s.label) * 6;
+    int trackX0 = s.x + labelW + 4;
+    int trackX1 = s.x + s.w - 28;
+    int trackW  = trackX1 - trackX0;
+    if (x < trackX0) x = trackX0;
+    if (x > trackX1) x = trackX1;
+    float norm = (float)(x - trackX0) / (float)trackW;
+    if (norm < 0) norm = 0;
+    if (norm > 1) norm = 1;
+    float v;
+    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
+        v = s.min * powf(s.max / s.min, norm);
+    } else {
+        v = s.min + norm * (s.max - s.min);
+    }
+    *s.value = v;
+    synth.setParam(s.paramId, v);
+}
+
 // =============================================================================
 // Page builders
 // =============================================================================
-
 static void buildOscSliders() {
     PatchData& p = synth.patch();
     int x = 6;
@@ -179,9 +247,9 @@ static void buildVcfSliders() {
 
 static void buildEnvSliders() {
     PatchData& p = synth.patch();
-    int x = 8;
+    int x = 12;
     int gapIn  = 4;
-    int gapOut = 14;
+    int gapOut = 22;
     pageSliders[0] = { "A", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampA, 0.0f, 3000.0f, true,  ParamId::AmpA, "ms" }; x += SLIDER_W + gapIn;
     pageSliders[1] = { "D", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampD, 0.0f, 3000.0f, true,  ParamId::AmpD, "ms" }; x += SLIDER_W + gapIn;
     pageSliders[2] = { "S", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.ampS, 0.0f, 1.0f,    false, ParamId::AmpS, nullptr }; x += SLIDER_W + gapIn;
@@ -189,9 +257,8 @@ static void buildEnvSliders() {
     pageSliders[4] = { "A", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltA, 0.0f, 3000.0f, true,  ParamId::FltA, "ms" }; x += SLIDER_W + gapIn;
     pageSliders[5] = { "D", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltD, 0.0f, 3000.0f, true,  ParamId::FltD, "ms" }; x += SLIDER_W + gapIn;
     pageSliders[6] = { "S", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltS, 0.0f, 1.0f,    false, ParamId::FltS, nullptr }; x += SLIDER_W + gapIn;
-    pageSliders[7] = { "R", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltR, 0.0f, 5000.0f, true,  ParamId::FltR, "ms" }; x += SLIDER_W + gapOut;
-    pageSliders[8] = { "AMT", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.velAmount, 0.0f, 1.0f, false, ParamId::VelAmount, nullptr };
-    pageSliderCount = 9;
+    pageSliders[7] = { "R", x, ENV_SLIDER_Y, SLIDER_W, ENV_SLIDER_H, &p.fltR, 0.0f, 5000.0f, true,  ParamId::FltR, "ms" };
+    pageSliderCount = 8;
 }
 
 static void buildChorusSliders() {
@@ -218,9 +285,8 @@ static void buildPageSliders(UIPage page) {
 }
 
 // =============================================================================
-// Bottom dest strip (LFO DEST / VEL DEST) — Ableton style: text-only with accent underline
+// Bottom dest strip (LFO DEST / VEL DEST)
 // =============================================================================
-
 static void destStripLayout(int& bx, int& by, int count) {
     bx = SCREEN_W - count * DEST_BTN_W - (count - 1) * DEST_BTN_GAP - 6;
     by = SCREEN_H - DEST_BTN_H - 4;
@@ -230,7 +296,6 @@ static void drawDestStrip(const char* const* labels, int count, int current, con
     int bx, by;
     destStripLayout(bx, by, count);
 
-    // Title above
     tft.setTextSize(1);
     tft.setTextColor(TH_TEXT_DIM);
     tft.setCursor(bx, by - 11);
@@ -240,23 +305,15 @@ static void drawDestStrip(const char* const* labels, int count, int current, con
         int xx = bx + i * (DEST_BTN_W + DEST_BTN_GAP);
         bool active = (current == i);
 
-        // Background fill (subtle, only if active)
-        if (active) {
-            tft.fillRect(xx, by, DEST_BTN_W, DEST_BTN_H, TH_BG_PANEL_HI);
-        } else {
-            tft.fillRect(xx, by, DEST_BTN_W, DEST_BTN_H, TH_BG_DEEPEST);
-        }
+        if (active) tft.fillRect(xx, by, DEST_BTN_W, DEST_BTN_H, TH_BG_PANEL_HI);
+        else        tft.fillRect(xx, by, DEST_BTN_W, DEST_BTN_H, TH_BG_DEEPEST);
 
-        // Label
         tft.setTextColor(active ? TH_TEXT_HI : TH_TEXT_DIM);
         int tw = strlen(labels[i]) * 6;
         tft.setCursor(xx + (DEST_BTN_W - tw) / 2, by + (DEST_BTN_H - 8) / 2);
         tft.print(labels[i]);
 
-        // Accent underline if active
-        if (active) {
-            tft.fillRect(xx, by + DEST_BTN_H, DEST_BTN_W, 1, TH_ACCENT);
-        }
+        if (active) tft.fillRect(xx, by + DEST_BTN_H, DEST_BTN_W, 1, TH_ACCENT);
     }
 }
 
@@ -274,7 +331,6 @@ static int destStripHit(int x, int y, int count) {
 // =============================================================================
 // UI init
 // =============================================================================
-
 void UI::begin() {
     tft.begin();
     tft.setRotation(DISPLAY_ROTATION);
@@ -303,7 +359,6 @@ void UI::begin() {
 // =============================================================================
 // Header
 // =============================================================================
-
 void UI::computeHeaderLayout() {
     const int N = synth.voiceCount();
 
@@ -311,7 +366,6 @@ void UI::computeHeaderLayout() {
     hdrDotRadius = (hdrDotsPerRow <= 8) ? 2 : 1;
     hdrDotPitch  = (hdrDotRadius == 2) ? 5 : 3;
 
-    // CPU text "99%" = 3 chars × 6 = 18 px
     const int cpuTextW   = 4 * 6;
     const int leftMargin = 6;
 
@@ -327,12 +381,10 @@ void UI::computeHeaderLayout() {
     int dotsW = hdrDotsPerRow * hdrDotPitch;
     hdrNameX = hdrDotsX + dotsW + 10;
 
-    // MIDI activity block: tighter, "U·D·H" inline labels with dim/lit dots
     const int midiActBlockW = 40;
     midiActX = calBtnX - midiActBlockW - 6;
     midiActY = hdrCpuY;
 
-    // Stereo meter: between name and MIDI activity
     meterW = 24;
     meterH = HEADER_H - 8;
     meterX = midiActX - meterW - 8;
@@ -354,11 +406,9 @@ void UI::drawHeaderCpu() {
     snprintf(buf, sizeof(buf), "%2d%%", (int)(pct + 0.5f));
 
     tft.setTextSize(1);
-    // Color the % readout based on load
-    uint16_t c = TH_TEXT_DIM;
+    uint16_t c = TH_TEXT_NORM;
     if (pct > 70) c = TH_METER_CLIP;
     else if (pct > 50) c = TH_METER_LOUD;
-    else c = TH_TEXT_NORM;
     tft.setTextColor(c);
     tft.setCursor(hdrCpuX, hdrCpuY);
     tft.print(buf);
@@ -429,7 +479,6 @@ void UI::drawHeaderMeter() {
 }
 
 void UI::drawMidiActivity() {
-    // Layout: "U·D·H" inline. Letters in TH_TEXT_DIM/HI, dots colored when active.
     tft.fillRect(midiActX, 0, 40, HEADER_H, TH_BG_DARK);
 
     struct SrcInfo { MidiSource src; const char* label; uint16_t color; };
@@ -445,13 +494,11 @@ void UI::drawMidiActivity() {
         float k = midiActivity.intensity(srcs[i].src);
         bool active = (k > 0.0f);
 
-        // Letter
         tft.setTextColor(active ? TH_TEXT_HI : TH_TEXT_DIM);
         tft.setCursor(x, midiActY);
         tft.print(srcs[i].label);
         x += 6;
 
-        // Dot (small, just to the right of letter)
         uint16_t c;
         if (k <= 0.0f) {
             c = TH_MIDI_OFF;
@@ -476,7 +523,6 @@ void UI::drawHeader() {
     drawHeaderCpu();
     drawHeaderVoiceDots();
 
-    // Patch name centered between dots and meter
     tft.setTextColor(TH_TEXT_HI);
     tft.setTextSize(1);
     const char* name = synth.patch().name;
@@ -491,14 +537,12 @@ void UI::drawHeader() {
     drawMidiActivity();
     drawCalButton(false);
 
-    // Bottom rule
     drawHRule(HEADER_H - 1);
 }
 
 // =============================================================================
-// Tabs — Ableton-style: text only, accent bar above active
+// Tabs
 // =============================================================================
-
 void UI::drawTabs() {
     tft.fillRect(0, TABS_Y, SCREEN_W, TABS_H, TH_BG_DEEPEST);
 
@@ -507,12 +551,10 @@ void UI::drawTabs() {
         int x = i * tabW;
         bool active = (i == currentPage);
 
-        // Accent bar above active tab
         if (active) {
             tft.fillRect(x + 4, TABS_Y, tabW - 8, TH_ACCENT_BAR_H, TH_ACCENT);
         }
 
-        // Label
         tft.setTextColor(active ? TH_TEXT_HI : TH_TEXT_DIM);
         tft.setTextSize(1);
         int tw = strlen(pageNames[i]) * 6;
@@ -532,9 +574,8 @@ int UI::tabHitTest(int x, int y) const {
 }
 
 // =============================================================================
-// Page bodies
+// Page drawers
 // =============================================================================
-
 void UI::drawOscPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
     for (int i = 0; i < pageSliderCount; i++) drawSlimSlider(pageSliders[i]);
@@ -552,16 +593,40 @@ void UI::drawVcfPage() {
 void UI::drawEnvPage() {
     tft.fillRect(0, BODY_Y, SCREEN_W, BODY_H, TH_BG_DEEPEST);
 
+    // Section labels — centered over each ADSR group
     tft.setTextColor(TH_TEXT_DIM);
     tft.setTextSize(1);
-    tft.setCursor(40,  ENV_LABEL_Y);  tft.print("AMP");
-    tft.setCursor(160, ENV_LABEL_Y);  tft.print("FILTER");
-    tft.setCursor(280, ENV_LABEL_Y);  tft.print("VEL");
+    // AMP group: x=12..152 (4 sliders × 32 + 3 × 4 gap = 140), center ≈ 82
+    // "AMP" 18px wide → start at 73
+    tft.setCursor( 73, ENV_LABEL_Y); tft.print("AMP");
+    // FILTER group: x=174..314, center ≈ 244
+    // "FILTER" 36px → start at 226
+    tft.setCursor(226, ENV_LABEL_Y); tft.print("FILTER");
 
     for (int i = 0; i < pageSliderCount; i++) drawSlimSlider(pageSliders[i]);
 
-    static const char* labels[] = { "OFF", "VCA", "CUT", "LFO" };
-    drawDestStrip(labels, 4, synth.patch().velDest, "VEL DEST");
+    // Bottom row: V-AMT inline slider (left) + VEL DEST strip (right)
+    static const char* destLabels[] = { "OFF", "VCA", "CUT", "LFO" };
+    drawDestStrip(destLabels, 4, synth.patch().velDest, "VEL DEST");
+
+    // V-AMT inline lives left of VEL DEST.
+    // Strip starts at x = 320 - 4*44 - 3*2 - 6 = 132, so we have 6..126 available.
+    int amtX = 6;
+    int amtY = SCREEN_H - DEST_BTN_H - 4;     // align vertically with strip
+    int amtW = 120;
+    int amtH = DEST_BTN_H;
+
+    InlineSlider vAmt = {
+        amtX, amtY, amtW, amtH,
+        &synth.patch().velAmount,
+        0.0f, 1.0f, false,
+        ParamId::VelAmount,
+        "V-AMT", nullptr
+    };
+    drawInlineSlider(vAmt);
+
+    // Cache hit-test rect
+    envVelAmtRect = { amtX, amtY, amtW, amtH, true };
 }
 
 void UI::drawChorusPage() {
@@ -621,7 +686,6 @@ void UI::drawPerfPage() {
     tft.printf("%d", arp.getOctaves());
     drawIncBtn(150, row3y, 20, 18, "+");
 
-    // MIDI section
     int sepY = row3y + 26;
     drawHRule(sepY, TH_RULE);
 
@@ -642,9 +706,8 @@ void UI::drawPerfPage() {
 }
 
 // =============================================================================
-// Patch page — list-style with rules
+// Patch page
 // =============================================================================
-
 static const int PATCH_COLS = 2;
 static const int PATCH_ROWS = NUM_PATCH_SLOTS / PATCH_COLS;
 
@@ -677,17 +740,13 @@ void UI::drawPatchPage() {
         bool sel    = (i == selectedSlot);
         bool loaded = (i == loadedSlot);
 
-        // Selected: inverted (orange fill)
         if (sel) {
             tft.fillRect(x, y, w, h, TH_ACCENT_DIM);
         }
-
-        // Loaded indicator: dot on the left
         if (loaded) {
             tft.fillCircle(x + 4, y + h / 2, 2, sel ? TH_TEXT_HI : TH_ACCENT);
         }
 
-        // Slot number + name
         uint16_t txt = sel ? TH_TEXT_HI : (has ? TH_TEXT_NORM : TH_TEXT_DIM);
         tft.setTextColor(txt);
         tft.setTextSize(1);
@@ -705,20 +764,15 @@ void UI::drawPatchPage() {
         tft.setCursor(x + 10, y + (h - 8) / 2);
         tft.print(line);
 
-        // Bottom rule (very subtle)
         if (!sel) {
             tft.drawFastHLine(x + 2, y + h - 1, w - 4, TH_RULE);
         }
     }
 
-    // Vertical rule between columns
     int colSepX = 2 + (SCREEN_W - 70 - 4) / 2;
     tft.drawFastVLine(colSepX, BODY_Y + 3, BODY_H - 6, TH_RULE);
-
-    // Vertical rule before action button column
     tft.drawFastVLine(SCREEN_W - 70, BODY_Y + 2, BODY_H - 4, TH_RULE);
 
-    // Action buttons (outlined)
     int bw = 60, bh = 18;
     int bx = SCREEN_W - bw - 5;
     int by1 = BODY_Y + 6;
@@ -743,7 +797,6 @@ int UI::patchSlotHitTest(int px, int py) const {
 // =============================================================================
 // Status, body, full redraw
 // =============================================================================
-
 void UI::showStatus(const char* msg, uint16_t color) {
     int w = 200, h = 28;
     int x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
@@ -761,6 +814,9 @@ void UI::showStatus(const char* msg, uint16_t color) {
 }
 
 void UI::drawBody() {
+    // Reset cached inline slider rect; only ENV page sets it
+    envVelAmtRect.valid = false;
+
     buildPageSliders(currentPage);
     switch (currentPage) {
         case PAGE_OSC:    drawOscPage();    break;
@@ -840,9 +896,8 @@ void UI::onPatchSlotTap(int slotIdx) {
 }
 
 // =============================================================================
-// Touch dispatch (logic identical to before, just visual changes above)
+// Touch dispatch
 // =============================================================================
-
 void UI::handleTouch(int x, int y) {
     if (inCalButton(x, y)) {
         drawCalButton(true);
@@ -885,6 +940,21 @@ void UI::handleTouch(int x, int y) {
             return;
         }
     } else if (currentPage == PAGE_ENV) {
+        // Inline V-AMT slider — check before dest strip
+        if (envVelAmtRect.valid &&
+            x >= envVelAmtRect.x && x <= envVelAmtRect.x + envVelAmtRect.w &&
+            y >= envVelAmtRect.y - 4 && y <= envVelAmtRect.y + envVelAmtRect.h + 4) {
+            InlineSlider vAmt = {
+                envVelAmtRect.x, envVelAmtRect.y, envVelAmtRect.w, envVelAmtRect.h,
+                &synth.patch().velAmount,
+                0.0f, 1.0f, false,
+                ParamId::VelAmount,
+                "V-AMT", nullptr
+            };
+            inlineSliderApply(vAmt, x);
+            drawInlineSlider(vAmt);
+            return;
+        }
         int hit = destStripHit(x, y, 4);
         if (hit >= 0) {
             synth.patch().velDest = (uint8_t)hit;
