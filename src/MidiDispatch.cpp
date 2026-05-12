@@ -39,6 +39,7 @@ void midiDispatchCC(byte ch, byte cc, byte val, MidiSource src) {
         case 20:  synth.setParam(ParamId::SawLevel,   vf); return;
         case 21:  synth.setParam(ParamId::PulseLevel, vf); return;
         case 22:  synth.setParam(ParamId::SubLevel,   vf); return;
+        case 19:  synth.setParam(ParamId::Drive, 1.0f + vf * 7.0f); return;
         case 64:  synth.setSustain(val >= 64); return;
         case 70:  synth.setParam(ParamId::PulseWidth, 0.05f + vf * 0.9f); return;
         case 74:  synth.setParam(ParamId::Cutoff,    40.0f + vf * 7960.0f); return;
