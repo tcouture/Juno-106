@@ -109,8 +109,8 @@ void AudioEffectJunoChorus::update(void) {
         // ------------------------------------------------------------
         float rL = (float)widx - dL;
         float rR = (float)widx - dR;
-        while (rL < 0) rL += BUFSIZE;
-        while (rR < 0) rR += BUFSIZE;
+        if (rL < 0) rL += BUFSIZE;
+        if (rR < 0) rR += BUFSIZE;
 
         int   iL  = (int)rL;
         float fL  = rL - iL;

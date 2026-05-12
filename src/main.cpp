@@ -36,8 +36,26 @@ void setup() {
 
 void loop() {
     midiHandler.update();
-    hostMidi.update();         // <-- NEW
+    hostMidi.update();
     synth.update();
     arp.tick(millis());
     ui.update();
+
+    // Resource usage telemetry - uncomment to use
+    /*
+    static uint32_t lastMemPrintMs = 0;
+    uint32_t now = millis();
+    if (now - lastMemPrintMs >= 2000) {
+        lastMemPrintMs = now;
+        Serial.print("AudioMem cur=");
+        Serial.print(AudioMemoryUsage());
+        Serial.print(" max=");
+        Serial.print(AudioMemoryUsageMax());
+        Serial.print("  CPU=");
+        Serial.print(AudioProcessorUsage(), 1);
+        Serial.print("% max=");
+        Serial.print(AudioProcessorUsageMax(), 1);
+        Serial.println("%");
+    }
+    */
 }

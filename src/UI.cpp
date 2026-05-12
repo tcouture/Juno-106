@@ -222,6 +222,23 @@ static void inlineSliderApply(const InlineSlider& s, int x) {
     synth.setParam(s.paramId, v);
 }
 
+static void sanitizePatchName(char* s, size_t n) {
+    if (!s || n == 0) return;
+
+    s[n - 1] = 0; // enforce termination
+
+    int len = (int)strlen(s);
+    while (len > 0 && s[len - 1] == ' ') {
+        s[len - 1] = 0;
+        --len;
+    }
+
+    if (s[0] == 0) {
+        strncpy(s, "UNTITLED", n - 1);
+        s[n - 1] = 0;
+    }
+}
+
 // =============================================================================
 // Page builders
 // =============================================================================
@@ -1059,10 +1076,7 @@ void UI::handleTouch(int x, int y) {
                 char newName[17];
                 bool ok = osKeyboard.edit("Name patch:", seed, newName, sizeof(newName));
                 if (!ok) { drawAll(); return; }
-                for (int i = strlen(newName) - 1; i >= 0; i--) {
-                    if (newName[i] == ' ') newName[i] = 0; else break;
-                }
-                if (newName[0] == 0) strcpy(newName, "UNTITLED");
+                sanitizePatchName(newName, sizeof(newName));
                 strncpy(p.name, newName, sizeof(p.name) - 1);
                 p.name[sizeof(p.name) - 1] = 0;
                 bool saved = patchManager.savePatch(selectedSlot, p);
@@ -1081,10 +1095,7 @@ void UI::handleTouch(int x, int y) {
                 char newName[17];
                 bool ok = osKeyboard.edit("Rename patch:", p.name, newName, sizeof(newName));
                 if (!ok) { drawAll(); return; }
-                for (int i = strlen(newName) - 1; i >= 0; i--) {
-                    if (newName[i] == ' ') newName[i] = 0; else break;
-                }
-                if (newName[0] == 0) strcpy(newName, "UNTITLED");
+                sanitizePatchName(newName, sizeof(newName));
                 strncpy(p.name, newName, sizeof(p.name) - 1);
                 p.name[sizeof(p.name) - 1] = 0;
                 bool saved = patchManager.savePatch(selectedSlot, p);
