@@ -124,6 +124,7 @@ Full build instructions in [`docs/BUILD.md`](docs/BUILD.md).
 - XPT2046 driver: [PaulStoffregen/XPT2046_Touchscreen](https://github.com/PaulStoffregen/XPT2046_Touchscreen)
 - MIDI: [FortySevenEffects Arduino MIDI Library](https://github.com/FortySevenEffects/arduino_midi_library)
 - Original Juno-106 design © Roland Corporation (this project is a clean-room software emulation, not affiliated)
+- Special thanks to Anthropic Claude and OpenAI Codex
 
 ---
 
