@@ -36,6 +36,7 @@ Set per patch on the PERF tab, MIDI section. Applies to note-on, note-off, CC, a
 | 20 | Saw level | 0 - 1 |
 | 21 | Pulse level | 0 - 1 |
 | 22 | Sub level | 0 - 1 |
+| 19 | Drive | 1 - 8 |
 | 64 | **Sustain pedal** | >=64 = on, <64 = off |
 | 70 | Pulse width | 0.05 - 0.95 |
 | 71 | Resonance | 0.7 - 5 |
