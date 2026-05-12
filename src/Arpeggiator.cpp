@@ -7,12 +7,30 @@ void Arpeggiator::begin() {
     heldCount = 0;
     lastStepMs = 0;
     lastPlayedNote = 255;
+    resetSequenceState();
+}
+
+void Arpeggiator::resetSequenceState() {
+    octIdx = 0;
+    goingUp = true;
+
+    if (heldCount <= 0) {
+        stepIdx = 0;
+        return;
+    }
+
+    // Deterministic start per mode
+    if (mode == ARP_DOWN) stepIdx = heldCount - 1;
+    else                  stepIdx = 0;
 }
 
 void Arpeggiator::setMode(ArpMode m) {
     mode = m;
-    if (m == ARP_OFF) allOff();
-    stepIdx = 0; octIdx = 0; goingUp = true;
+    if (m == ARP_OFF) {
+        allOff();
+        return;
+    }
+    resetSequenceState();
 }
 
 void Arpeggiator::setRateHz(float hz) {
@@ -30,17 +48,25 @@ void Arpeggiator::setOctaves(uint8_t o) {
 void Arpeggiator::noteOn(uint8_t note, uint8_t velocity) {
     if (mode == ARP_OFF) { synth.noteOn(note, velocity); return; }
     for (int i = 0; i < heldCount; i++) if (held[i] == note) return;
+
     if (heldCount < MAX_HELD) {
         int i = heldCount;
-        while (i > 0 && held[i-1] > note) { held[i] = held[i-1]; heldVel[i] = heldVel[i-1]; i--; }
+        while (i > 0 && held[i-1] > note) {
+            held[i] = held[i-1];
+            heldVel[i] = heldVel[i-1];
+            i--;
+        }
         held[i]    = note;
         heldVel[i] = velocity;
         heldCount++;
+
+        resetSequenceState();
     }
 }
 
 void Arpeggiator::noteOff(uint8_t note) {
     if (mode == ARP_OFF) { synth.noteOff(note); return; }
+
     for (int i = 0; i < heldCount; i++) {
         if (held[i] == note) {
             for (int j = i; j < heldCount - 1; j++) {
@@ -51,11 +77,17 @@ void Arpeggiator::noteOff(uint8_t note) {
             break;
         }
     }
-    if (heldCount == 0) allOff();
+
+    if (heldCount == 0) {
+        allOff();
+    } else {
+        if (stepIdx < 0 || stepIdx >= heldCount) resetSequenceState();
+    }
 }
 
 int Arpeggiator::advanceStep() {
     if (heldCount == 0) return -1;
+
     switch (mode) {
         case ARP_UP:
             stepIdx++;
@@ -64,6 +96,7 @@ int Arpeggiator::advanceStep() {
                 octIdx = (octIdx + 1) % octaves;
             }
             break;
+
         case ARP_DOWN:
             stepIdx--;
             if (stepIdx < 0) {
@@ -71,6 +104,7 @@ int Arpeggiator::advanceStep() {
                 octIdx = (octIdx + 1) % octaves;
             }
             break;
+
         case ARP_UPDN:
             if (heldCount == 1) { stepIdx = 0; break; }
             if (goingUp) {
@@ -88,13 +122,16 @@ int Arpeggiator::advanceStep() {
                 }
             }
             break;
+
         case ARP_RND:
             stepIdx = random(heldCount);
             octIdx  = random(octaves);
             break;
+
         default:
             return -1;
     }
+
     return stepIdx;
 }
 
@@ -128,5 +165,5 @@ void Arpeggiator::allOff() {
         lastPlayedNote = 255;
     }
     synth.allNotesOff();
-    stepIdx = 0; octIdx = 0; goingUp = true;
+    resetSequenceState();
 }

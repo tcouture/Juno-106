@@ -46,6 +46,9 @@ private:
 
     void allOff();
     int  advanceStep();
+
+    // NEW
+    void resetSequenceState();
 };
 
 extern Arpeggiator arp;

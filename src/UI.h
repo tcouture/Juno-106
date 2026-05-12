@@ -57,6 +57,13 @@ private:
     int  patchSlotHitTest(int x, int y) const;
     void onPatchSlotTap(int slotIdx);
 
+    // ---- NEW: drag-capture helpers (member methods) ----
+    enum class TouchTargetType : uint8_t { None, Slider, EnvVelAmt };
+    void beginTouchCapture(int x, int y);
+    void updateTouchCapture(int x, int y);
+    void endTouchCapture();
+    void applyVerticalSliderAtIndex(int sliderIndex, int y);
+
     UIPage  currentPage = PAGE_PATCH;
 
     // CAL button
@@ -86,6 +93,20 @@ private:
     // Inline V-AMT slider rect for ENV page (cached for hit-test)
     struct InlineSliderRef { int x, y, w, h; bool valid = false; };
     InlineSliderRef envVelAmtRect;
+
+    // ---- NEW: touch capture state ----
+    bool            touchActive = false;
+    TouchTargetType touchTarget = TouchTargetType::None;
+    int             touchTargetIndex = -1;
+
+    // Touch tracking for tap-vs-drag and jitter filtering
+    int16_t touchStartX = 0;
+    int16_t touchStartY = 0;
+    int16_t touchLastX  = 0;
+    int16_t touchLastY  = 0;
+    bool    touchMoved  = false;
+    
+    int currentTapSlopPx() const;
 };
 
 extern UI ui;

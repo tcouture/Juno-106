@@ -64,6 +64,12 @@ static constexpr int DEST_BTN_W   = 44;
 static constexpr int DEST_BTN_H   = 16;
 static constexpr int DEST_BTN_GAP = 2;
 
+// if you still see tiny wiggle on held drags change TOUCH_JITTER_PX to "2"
+static constexpr int TOUCH_JITTER_PX            = 1;
+static constexpr int TOUCH_TAP_SLOP_PATCH_PX    = 5;
+static constexpr int TOUCH_TAP_SLOP_PERF_PX     = 6;
+static constexpr int TOUCH_TAP_SLOP_DEFAULT_PX  = 9; // OSC/VCF/ENV/CHORUS
+
 static const char* pageNames[PAGE_COUNT] = { "PATCH", "OSC", "VCF", "ENV", "CHORUS", "PERF" };
 
 // =============================================================================
@@ -1104,6 +1110,91 @@ void UI::handleTouch(int x, int y) {
     }
 }
 
+void UI::applyVerticalSliderAtIndex(int sliderIndex, int y) {
+    if (sliderIndex < 0 || sliderIndex >= pageSliderCount) return;
+    Slider& s = pageSliders[sliderIndex];
+
+    float norm = 1.0f - (float)(y - s.y) / (float)s.h;
+    if (norm < 0) norm = 0;
+    if (norm > 1) norm = 1;
+
+    float v;
+    if (s.logarithmic && s.min > 0.0f && s.max > 0.0f) {
+        v = s.min * powf(s.max / s.min, norm);
+    } else {
+        v = s.min + norm * (s.max - s.min);
+    }
+
+    *s.value = v;
+    synth.setParam(s.paramId, v);
+    drawSlimSlider(s);
+}
+
+void UI::beginTouchCapture(int x, int y) {
+    touchTarget = TouchTargetType::None;
+    touchTargetIndex = -1;
+
+    int si = sliderHitTest(x, y);
+    if (si >= 0) {
+        touchTarget = TouchTargetType::Slider;
+        touchTargetIndex = si;
+        return;
+    }
+
+    if (currentPage == PAGE_ENV &&
+        envVelAmtRect.valid &&
+        x >= envVelAmtRect.x && x <= envVelAmtRect.x + envVelAmtRect.w &&
+        y >= envVelAmtRect.y - 4 && y <= envVelAmtRect.y + envVelAmtRect.h + 4) {
+        touchTarget = TouchTargetType::EnvVelAmt;
+        touchTargetIndex = 0;
+        return;
+    }
+}
+
+void UI::updateTouchCapture(int x, int y) {
+    switch (touchTarget) {
+        case TouchTargetType::Slider:
+            applyVerticalSliderAtIndex(touchTargetIndex, y); // lock identity, allow x drift
+            break;
+
+        case TouchTargetType::EnvVelAmt:
+            if (currentPage == PAGE_ENV && envVelAmtRect.valid) {
+                InlineSlider vAmt = {
+                    envVelAmtRect.x, envVelAmtRect.y, envVelAmtRect.w, envVelAmtRect.h,
+                    &synth.patch().velAmount,
+                    0.0f, 1.0f, false,
+                    ParamId::VelAmount,
+                    "V-AMT", nullptr
+                };
+                inlineSliderApply(vAmt, x);
+                drawInlineSlider(vAmt);
+            }
+            break;
+
+        case TouchTargetType::None:
+        default:
+            break;
+    }
+}
+
+void UI::endTouchCapture() {
+    touchTarget = TouchTargetType::None;
+    touchTargetIndex = -1;
+}
+
+int UI::currentTapSlopPx() const {
+    switch (currentPage) {
+        case PAGE_PATCH: return TOUCH_TAP_SLOP_PATCH_PX;   // list/buttons
+        case PAGE_PERF:  return TOUCH_TAP_SLOP_PERF_PX;    // mixed controls
+        case PAGE_OSC:
+        case PAGE_VCF:
+        case PAGE_ENV:
+        case PAGE_CHORUS:
+        default:
+            return TOUCH_TAP_SLOP_DEFAULT_PX;              // slider-heavy
+    }
+}
+
 void UI::update() {
     static uint32_t lastTouchMs = 0;
     static uint32_t lastMeterMs = 0;
@@ -1111,12 +1202,61 @@ void UI::update() {
 
     uint32_t now = millis();
 
-    if (ts.touched() && (now - lastTouchMs >= 16)) {
+    bool isTouched = ts.touched();
+    if (isTouched && (now - lastTouchMs >= 16)) {
         lastTouchMs = now;
+
         TS_Point p = ts.getPoint();
         int16_t sx, sy;
         touchCal.mapToScreen(p.x, p.y, sx, sy);
-        handleTouch(sx, sy);
+
+        if (!touchActive) {
+            // Touch begin
+            touchActive = true;
+            touchMoved  = false;
+
+            touchStartX = sx;
+            touchStartY = sy;
+            touchLastX  = sx;
+            touchLastY  = sy;
+
+            // Do NOT trigger tap actions yet; decide on release.
+            // Also do NOT capture immediately; wait until drag intent is clear.
+            touchTarget = TouchTargetType::None;
+            touchTargetIndex = -1;
+        } else {
+            // Touch continue
+            int dxFromStart = sx - touchStartX; if (dxFromStart < 0) dxFromStart = -dxFromStart;
+            int dyFromStart = sy - touchStartY; if (dyFromStart < 0) dyFromStart = -dyFromStart;
+
+            int tapSlop = currentTapSlopPx();
+            if (!touchMoved && (dxFromStart > tapSlop || dyFromStart > tapSlop)) {
+                touchMoved = true;
+                beginTouchCapture(sx, sy);
+            }
+
+            if (touchTarget != TouchTargetType::None) {
+                int dxStep = sx - touchLastX; if (dxStep < 0) dxStep = -dxStep;
+                int dyStep = sy - touchLastY; if (dyStep < 0) dyStep = -dyStep;
+
+                // Ignore tiny jitter while dragging
+                if (dxStep > TOUCH_JITTER_PX || dyStep > TOUCH_JITTER_PX) {
+                    updateTouchCapture(sx, sy);
+                    touchLastX = sx;
+                    touchLastY = sy;
+                }
+            }
+        }
+    } else if (!isTouched && touchActive) {
+        // Touch end
+        if (!touchMoved) {
+            // True tap: now dispatch buttons/tabs/one-shot controls
+            handleTouch(touchStartX, touchStartY);
+        }
+
+        touchActive = false;
+        touchMoved  = false;
+        endTouchCapture();
     }
 
     if (now - lastMeterMs >= 100) {
