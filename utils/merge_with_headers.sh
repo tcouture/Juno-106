@@ -14,7 +14,9 @@ OUTPUT_FILE="${2:-merged_output.txt}"
 find "$INPUT_DIR" -maxdepth 1 -type f | sort | while IFS= read -r file; do
   filename="$(basename "$file")"
   {
+    echo    # blank line between files
     echo "===== $filename ====="
+    echo    # blank line between files
     cat "$file"
     echo    # blank line between files
   } >> "$OUTPUT_FILE"
